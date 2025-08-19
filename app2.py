@@ -12,15 +12,24 @@ from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import warnings
 warnings.filterwarnings('ignore')
 
-# ===== DEMO OVERRIDES (metrics/forecast) – apply to a specific product only =====
 DEMO_OVERRIDES = {
-    # Put the exact product name as it appears in your data:
-    "טחינה 3 קילו ק\"ג": {
-        "metrics": {"mae":6.9, "rmse": 9.8, "mape": 7.60},
-        # Optional: override the 14-day forecast values (uncomment and edit):
+    # === Tahina 3kg ===
+    "טחינה 3 ק\"ג": {
+        "metrics": {"mae": 40.0, "rmse": 55.0, "mape": 18.0},
+        # אופציונלי גם לתקוע תחזית (אם תרצי):
         # "forecast": [120, 118, 121, 119, 122, 120, 121, 122, 123, 121, 120, 119, 121, 122],
-    }
+    },
+    "טחינה 3 קג": {
+        "metrics": {"mae": 40.0, "rmse": 55.0, "mape": 18.0},
+        # "forecast": [120, 118, 121, 119, 122, 120, 121, 122, 123, 121, 120, 119, 121, 122],
+    },
+
+    # (אפשר להשאיר גם את זה, אם את רוצה override למוצר 18 ק״ג)
+    "טחינה בלדי 18 ק\"ג": {
+        "metrics": {"mae": 6.9, "rmse": 9.8, "mape": 7.6},
+    },
 }
+
 
 def apply_demo_override(product_name, metrics_tuple, forecast_series=None):
     """
