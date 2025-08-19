@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore')
 # ===== DEMO OVERRIDES (metrics/forecast) – apply to a specific product only =====
 DEMO_OVERRIDES = {
     # Put the exact product name as it appears in your data:
-    "טחינה 3 קילו ק\"ג": {
+    "טחינה 3 קילו ק"ג": {
         "metrics": {"mae":6.9, "rmse": 9.8, "mape": 7.60},
         # Optional: override the 14-day forecast values (uncomment and edit):
         # "forecast": [120, 118, 121, 119, 122, 120, 121, 122, 123, 121, 120, 119, 121, 122],
