@@ -476,50 +476,44 @@ def build_random_forest_model(df_forecast):
 def build_exponential_smoothing_model(df_product):
     """
     Exponential Smoothing with validation-based selection.
-    Fixes:
-      - use_boxcox set ONLY at model init (not in fit)
-      - winsorize via Series.clip to keep a pandas Series
-      - always returns (model, mae, rmse, mape)
+    Fix: set use_boxcox ONLY at model init (not in fit) and keep it consistent.
+    Returns: final_model, mae, rmse, mape (metrics on fitted for display)
     """
     import numpy as np
     import pandas as pd
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
     from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-    # --- prep daily series ---
+    if len(df_product) < 10:
+        raise ValueError("Need at least 10 records for Exponential Smoothing")
+
+    # סדרה יומית נקייה
     s = (df_product.sort_values('Date')
                     .set_index('Date')['UnitsSold']
                     .resample('D').sum()
-                    .astype(float)
                     .fillna(0.0))
 
-    # trim to first/last non-zero to avoid long zero tails
+    # חיתוך לזמן שבין המכירה הראשונה לאחרונה (מסיר זנבות של אפסים)
     nz = s > 0
     if nz.any():
         s = s.loc[nz.idxmax():nz[::-1].idxmax()]
 
-    # if still too short -> trivial SES fallback that STILL returns metrics
     if len(s) < 7:
-        m = ExponentialSmoothing(s, initialization_method="estimated",
-                                 use_boxcox=None).fit(optimized=True, use_brute=True, remove_bias=True)
-        fitted = np.maximum(m.fittedvalues, 0.0)
-        mae = mean_absolute_error(s, fitted)
-        rmse = (mean_squared_error(s, fitted)) ** 0.5
-        mape = calculate_mape(s.values, fitted.values)
-        return m, mae, rmse, mape
+        raise ValueError("Insufficient data after cleaning - need at least 7 days")
 
-    # gentle winsorization (keeps Series!)
+    # winsorize עדין לייצוב (אופציונלי)
     if len(s) > 30:
-        s = s.clip(upper=float(np.quantile(s, 0.99)))
+        q99 = np.quantile(s, 0.99)
+        s = np.minimum(s, q99)
 
-    # --- validation window 7–14 days ---
+    # חלון ולידציה 7–14 ימים
     val_h = max(7, min(14, len(s) // 5))
     train, valid = s.iloc[:-val_h], s.iloc[-val_h:]
 
-    # Box-Cox only if strictly positive on both train and full
-    bc_flag = True if (train > 0).all() and (s > 0).all() else None  # None => no Box-Cox
+    # קביעת Box-Cox עקבי: רק אם כל הערכים חיוביים גם ב-Train וגם בכלל
+    bc_flag = True if (train > 0).all() and (s > 0).all() else None  # None = בלי Box-Cox
 
-    # candidate configs
+    # מרחב תצורות
     configs = []
     base_trends = [None, 'add']
     damp_opts = [False, True]
@@ -530,12 +524,13 @@ def build_exponential_smoothing_model(df_product):
             if has_weekly:
                 configs.append({'trend': tr, 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': dm})
 
-    best_cfg, best_score = None, float('inf')
+    best = None
+    best_score = float('inf')
 
     for cfg in configs:
         try:
-            # set use_boxcox ONLY at init
-            m = ExponentialSmoothing(
+            # >>> קובעים use_boxcox בשלב ה-init בלבד <<<
+            model = ExponentialSmoothing(
                 train,
                 trend=cfg['trend'],
                 seasonal=cfg['seasonal'],
@@ -543,37 +538,61 @@ def build_exponential_smoothing_model(df_product):
                 damped_trend=cfg['damped_trend'],
                 initialization_method="estimated",
                 use_boxcox=bc_flag
-            ).fit(optimized=True, use_brute=True, remove_bias=True)
+            ).fit(
+                optimized=True,
+                use_brute=True,
+                remove_bias=True
+            )
+            fc = model.forecast(val_h)
+            fc = np.maximum(fc, 0.0)
 
-            fc = np.maximum(m.forecast(val_h), 0.0)
-            score = mean_squared_error(valid, fc)
+            mae = mean_absolute_error(valid, fc)
+            rmse = (mean_squared_error(valid, fc)) ** 0.5
+            mape = calculate_mape(valid.values, fc.values)
+
+            score = rmse
             if score < best_score:
-                best_score, best_cfg = score, cfg
+                best_score = score
+                best = {'cfg': cfg, 'val_metrics': (mae, rmse, mape)}
         except Exception:
             continue
 
-    # refit on FULL series with chosen config (or SES fallback)
-    if best_cfg is None:
-        m = ExponentialSmoothing(
+    if best is None:
+        # נפילה רכה: SES בסיסי באותה שיטה
+        cfg = {'trend': None, 'seasonal': None, 'seasonal_periods': None, 'damped_trend': False}
+        final_model = ExponentialSmoothing(
             s, trend=None, seasonal=None, damped_trend=False,
             initialization_method="estimated", use_boxcox=bc_flag
         ).fit(optimized=True, use_brute=True, remove_bias=True)
-    else:
-        m = ExponentialSmoothing(
-            s,
-            trend=best_cfg.get('trend'),
-            seasonal=best_cfg.get('seasonal'),
-            seasonal_periods=best_cfg.get('seasonal_periods'),
-            damped_trend=best_cfg.get('damped_trend', False),
-            initialization_method="estimated",
-            use_boxcox=bc_flag
-        ).fit(optimized=True, use_brute=True, remove_bias=True)
+        fitted = np.maximum(final_model.fittedvalues, 0.0)
+        mae_full = mean_absolute_error(s, fitted)
+        rmse_full = (mean_squared_error(s, fitted)) ** 0.5
+        mape_full = calculate_mape(s.values, fitted.values)
+        return final_model, mae_full, rmse_full, mape_full
 
-    fitted = np.maximum(m.fittedvalues, 0.0)
-    mae = mean_absolute_error(s, fitted)
-    rmse = (mean_squared_error(s, fitted)) ** 0.5
-    mape = calculate_mape(s.values, fitted.values)
-    return m, mae, rmse, mape
+    # אימון מחדש על כל הסדרה עם אותה תצורה ועם אותו bc_flag
+    cfg = best['cfg']
+    final_model = ExponentialSmoothing(
+        s,
+        trend=cfg.get('trend'),
+        seasonal=cfg.get('seasonal'),
+        seasonal_periods=cfg.get('seasonal_periods'),
+        damped_trend=cfg.get('damped_trend', False),
+        initialization_method="estimated",
+        use_boxcox=bc_flag
+    ).fit(
+        optimized=True,
+        use_brute=True,
+        remove_bias=True
+    )
+
+    fitted = np.maximum(final_model.fittedvalues, 0.0)
+    mae_full = mean_absolute_error(s, fitted)
+    rmse_full = (mean_squared_error(s, fitted)) ** 0.5
+    mape_full = calculate_mape(s.values, fitted.values)
+
+    return final_model, mae_full, rmse_full, mape_full
+
 
 
 # ========== Navigation ==========
