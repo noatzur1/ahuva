@@ -705,26 +705,31 @@ if page == "HOME":
 
 # ========== ANALYSIS PAGE ==========
 elif page == "Analysis":
-    st.markdown("### Sales Over Time")
+    # ---- Sales Over Time (Daily) ----
+import pandas as pd
+st.markdown("### Sales Over Time")
 
-    d = df.copy()
-
-    d["Date"] = pd.to_datetime(d["Date"])
-
-    qty_col = "UnitsSold"
+d = df.copy()
+# 👇 אם השם לא "Date" – החליפי כאן לשם העמודה אצלך
+d["Date"] = pd.to_datetime(d["Date"])
+# 👇 אם השם לא "UnitsSold" – החליפי כאן לשם העמודה אצלך
+qty_col = "UnitsSold"
 
 # סינון אופציונלי לפי SKU (רק אם קיימת העמודה)
-    if "SKU" in d.columns:
+if "SKU" in d.columns:
     sku_filter = st.multiselect("Filter SKUs (optional)", sorted(d["SKU"].unique()))
     if sku_filter:
         d = d[d["SKU"].isin(sku_filter)]
 
 # אגרגציה יומית + MA7
-    ts = (d.groupby("Date", as_index=False)[qty_col].sum().sort_values("Date"))
-    ts["MA7"] = ts[qty_col].rolling(7, min_periods=1).mean()
+ts = (d.groupby("Date", as_index=False)[qty_col].sum().sort_values("Date"))
+ts["MA7"] = ts[qty_col].rolling(7, min_periods=1).mean()
 
 # גרף קו (Streamlit) עם שתי עקומות: יומי + MA7
-    st.line_chart(ts.set_index("Date")[[qty_col, "MA7"]])
+st.line_chart(ts.set_index("Date")[[qty_col, "MA7"]])
+
+    
+        
     st.markdown("<h1>Sales & Demand Analysis</h1><hr>", unsafe_allow_html=True)
 
     if st.session_state.df_clean is not None:
