@@ -599,10 +599,10 @@ if "df_clean" not in st.session_state:
     st.session_state.df_clean = None
 
 # ========== HOME PAGE ==========
-if page == "Home":
+if page == "HOME":
     st.markdown("""
-    <h1>Ahva Advanced Analytics Platform</h1>
-    <p class='page-subtitle'>Professional Data Analysis & Sales Forecasting System</p>
+    <h1 style='margin-bottom: 10px; text-align: center;'> Ahva Inventory Dashboard</h1>
+    <p style='text-align: center; font-size: 18px; color: #666;'>Advanced Analytics & Sales Forecasting Platform</p>
     <hr>
     """, unsafe_allow_html=True)
 
