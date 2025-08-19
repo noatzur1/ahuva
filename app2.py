@@ -25,98 +25,53 @@ st.set_page_config(
 # ========== CSS Styling ==
 st.markdown("""
 <style>
-    /* ===== Fancy Sidebar Nav Buttons ===== */
-:root{
-  --nav-bg: #ffffff;
-  --nav-border: #e5e7eb;
-  --nav-hover: #f5f7ff;
-  --nav-text: #0f172a;
-  --nav-active-text: #ffffff;
-  --nav-active-grad: linear-gradient(135deg, #6d28d9 0%, #0ea5e9 100%);
-  --nav-shadow: 0 10px 24px rgba(17,24,39,.10);
-  --radius: 14px;
-}
-
-/* מכולת ה־radio בסיידבר */
-section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"]{
+    /* Sidebar navigation radio -> pretty buttons */
+section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] {
+  gap: .4rem;
   display: grid;
-  gap: .5rem;
 }
 
-/* כפתור (label) */
-section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label{
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: .5rem;
-  padding: 12px 14px;
+section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label {
+  display: block;
+  border: 1px solid #e1e5ee;
+  border-radius: 10px;
+  padding: 10px 12px;
   margin: 0;
-  border: 1px solid var(--nav-border);
-  border-radius: var(--radius);
-  background: var(--nav-bg);
-  color: var(--nav-text);
-  font-weight: 600;
-  letter-spacing: .2px;
   cursor: pointer;
-  transition: transform .15s ease, box-shadow .2s ease, background .2s ease, color .2s ease, border-color .2s ease;
+  background: #fff;
+  transition: all .2s ease;
   box-shadow: 0 2px 6px rgba(0,0,0,.06);
 }
 
-/* הובר */
-section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label:hover{
+section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label:hover {
   transform: translateY(-1px);
-  background: var(--nav-hover);
   box-shadow: 0 8px 20px rgba(0,0,0,.08);
-  border-color: #c7cff5;
+  border-color: #667eea;
 }
 
 /* מצב נבחר */
 section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label[aria-checked="true"]{
-  background: var(--nav-active-grad);
-  color: var(--nav-active-text);
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
   border-color: transparent;
-  box-shadow: var(--nav-shadow);
-  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(118,75,162,.25);
 }
 
-/* "וי" עדין מימין כשהכפתור נבחר */
-section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label[aria-checked="true"]::after{
-  content: "✓";
-  font-weight: 800;
-  margin-inline-start: .25rem;
-  opacity: .9;
+/* טקסט הפריטים */
+section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label p {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: .2px;
 }
 
-/* פוקוס נגיש למקלדת */
-section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label:focus-within{
-  outline: 2px solid #a78bfa;  /* סגול בהיר */
-  outline-offset: 2px;
-  border-color: transparent;
-}
-
-/* כותרת הניווט (אם את משתמשת) */
-.sidebar-title{
+/* כותרת הניווט בסיידבר (אם את משתמשת בה) */
+.sidebar-title {
   font-size: 1rem;
   font-weight: 700;
   color: #2c3e50;
-  margin: .25rem 0 .6rem;
   letter-spacing: .3px;
+  margin: .25rem 0 .5rem 0;
 }
-
-/* מצב כהה (אוטומטי לפי מערכת) */
-@media (prefers-color-scheme: dark){
-  :root{
-    --nav-bg: #111827;
-    --nav-border: #1f2937;
-    --nav-hover: #0b1220;
-    --nav-text: #e5e7eb;
-    --nav-shadow: 0 10px 24px rgba(0,0,0,.35);
-  }
-  section[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] label{
-    box-shadow: none;
-  }
-}
-
 
 </style>
 """, unsafe_allow_html=True)
