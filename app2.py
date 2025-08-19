@@ -12,77 +12,6 @@ from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import warnings
 warnings.filterwarnings('ignore')
 
-# ===== DEMO OVERRIDES (metrics/forecast) – apply to a specific product only =====
-# כתבי כאן את השמות שאת רואה בדיוק בדרופדאון (אפשר כמה וריאציות לאותו מוצר).
-DEMO_OVERRIDES_RAW = {
-    "טחינה 3 ק\"ג": {  # וריאציה עם גרשיים
-        "metrics": {"mae": 40.0, "rmse": 55.0, "mape": 18.0},
-        # "forecast": [120,118,121,119,122,120,121,122,123,121,120,119,121,122],
-    },
-    "טחינה 3 קג": {   # וריאציה בלי גרשיים
-        "metrics": {"mae": 6.9, "rmse": 8.66, "mape": 7.23},
-    },
-    # אפשר להשאיר/להוסיף מוצרים נוספים:
-    "טחינה בלדי 18 ק\"ג": {
-        "metrics": {"mae": 6.9, "rmse": 9.8, "mape": 7.6},
-    },
-}
-
-def _norm_name(s):
-    import unicodedata, re
-    if s is None:
-        return ""
-    s = unicodedata.normalize("NFKC", str(s)).strip()
-    # אחידות סימני ציטוט/גרשיים/גרש, הורדת רווחים וסימני פיסוק
-    s = (s.replace("״", '"').replace("”", '"').replace("“", '"')
-           .replace("׳", "").replace("'", '"'))
-    s = re.sub(r'[ \t\n\r"\'\u05F3\u05F4\-\–\—\(\)\[\],.;:/\\]+', '', s)
-    return s
-
-# נרמל מפתחות מראש כדי שהשוואה לא תלויה בגרש/רווח/גירסאות
-DEMO_OVERRIDES = { _norm_name(k): v for k, v in DEMO_OVERRIDES_RAW.items() }
-
-def apply_demo_override(product_name, metrics_tuple, forecast_series=None):
-    """
-    Override metrics and optionally forecast for a specific product (demo/mock).
-    Returns: (mae, rmse, mape), forecast_series (maybe replaced)
-    """
-    from difflib import get_close_matches
-    key = _norm_name(product_name)
-    ov = DEMO_OVERRIDES.get(key)
-    if not ov:
-        # התאמה קרובה (אם יש פספוס קל בשם)
-        cand = get_close_matches(key, list(DEMO_OVERRIDES.keys()), n=1, cutoff=0.90)
-        if cand:
-            ov = DEMO_OVERRIDES[cand[0]]
-        else:
-            return metrics_tuple, forecast_series
-
-    mae, rmse, mape = metrics_tuple
-    m = ov.get("metrics", {})
-    mae = m.get("mae", mae)
-    rmse = m.get("rmse", rmse)
-    mape = m.get("mape", mape)
-
-    # אופציונלי: החלפת סדרת התחזית עצמה
-    if ov.get("forecast") is not None and forecast_series is not None:
-        import pandas as pd
-        vals = list(ov["forecast"])
-        H = len(forecast_series)
-        if H > 0:
-            if len(vals) < H:  # ריפוד
-                vals = vals + [vals[-1]] * (H - len(vals))
-            else:             # קיטום
-                vals = vals[:H]
-            try:
-                forecast_series = pd.Series(vals, index=getattr(forecast_series, "index", None))
-            except Exception:
-                forecast_series = pd.Series(vals)
-
-    return (mae, rmse, mape), forecast_series
-
-
-
 # ========== Page Configuration ==========
 st.set_page_config(
     page_title="Ahva Analytics Platform",
@@ -1092,8 +1021,6 @@ elif page == "Sales Forecasting":
 
                             forecast = es_model.forecast(steps=forecast_days)
                             forecast = np.maximum(forecast, 0)
-                            (mae, rmse, mape), forecast = apply_demo_override(selected_product, (mae, rmse, mape), forecast)
-
 
                             last_date = product_data['Date'].max()
                             future_dates = []
