@@ -1269,21 +1269,21 @@ if st.session_state.df_clean is not None:
         )
 
 st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-st.sidebar.markdown("**📊 Ahva Analytics Platform v3.5**")
-st.sidebar.markdown("*Enterprise Business Intelligence System*")
-st.sidebar.markdown("🚀 Powered by Advanced ML & Enhanced Time Series Analytics")
+    st.sidebar.markdown("**📊 Ahva Analytics Platform v3.5**")
+    st.sidebar.markdown("*Enterprise Business Intelligence System*")
+    st.sidebar.markdown("🚀 Powered by Advanced ML & Enhanced Time Series Analytics")
 
-if st.session_state.df_clean is not None:
-    st.sidebar.markdown("""
-    <div class="status-badge badge-success">
-        ✅ Enterprise System Active!
-    </div>
-    """, unsafe_allow_html=True)
-    st.sidebar.markdown("""
-    <div class="status-badge badge-success">
-        🤖 AI Forecasting Operational
-    </div>
-    """, unsafe_allow_html=True)">
+    if st.session_state.df_clean is not None:
+        st.sidebar.markdown("""
+        <div class="status-badge badge-success">
+            ✅ Enterprise System Active!
+        </div>
+        """, unsafe_allow_html=True)
+        st.sidebar.markdown("""
+        <div class="status-badge badge-success">
+            🤖 AI Forecasting Operational
+        </div>
+        """, unsafe_allow_html=True)">
                             <strong>Machine Learning Model Error:</strong> {str(e)}
                         </div>
                         """, unsafe_allow_html=True)
