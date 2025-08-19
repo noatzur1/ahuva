@@ -22,8 +22,7 @@ st.set_page_config(
     page_icon="📊"
 )
 
-# ========== CSS Styling ==st.markdown("""
-st.markdown(r'''
+# ========== CSS Styling ==st.markdown(r'''\n<style>\n
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     * {
@@ -236,8 +235,7 @@ st.markdown(r'''
             font-size: 2rem;
         }
     }
-    ''', unsafe_allow_html=True)
-
+\n</style>\n''', unsafe_allow_html=True)\nl=True)
 
 # ========== Column Mapping ==========
 COLUMN_MAPPING = {
