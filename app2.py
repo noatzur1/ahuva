@@ -910,7 +910,7 @@ elif page == "Forecasting":
                         - After 14 days you'll have: **{remaining_after_14_days:.0f} units**
                         - **NO IMMEDIATE ORDER NEEDED**
                         - Next review recommended: **In 1 week**
-                        """)stock_will_last:.1f} days**
+                           st.markdown(f"**{stock_will_last:.1f} days**")
                         - After 14 days you'll have: **{remaining_after_14_days:.0f} units**
                         - **NO IMMEDIATE ORDER NEEDED**
                         - Next review recommended: **In 1 week**
