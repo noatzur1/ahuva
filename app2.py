@@ -1,4 +1,21 @@
-import streamlit as st
+try:
+                    # Fixed 14-day forecast period
+                    forecast_days = 14
+
+                    # Product data validation
+                    product_data = df[df['Product'] == selected_product]
+                    if len(product_data) < 5:
+                        st.markdown(f"""
+                        <div class="alert-box alert-danger">
+                            <strong>Error:</strong> Insufficient data for {selected_product}. Need at least 5 records.
+                        </div>
+                        """, unsafe_allow_html=True)
+                        st.stop()
+
+                    product_info = product_data.iloc[-1]
+
+                    # Get CV from the predefined mapping
+                    product_sku = product_data['SKU'].iloc[0]import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -329,7 +346,7 @@ def clean_data(df):
         invalid_dates = df_clean['Date'].isna().sum()
         if invalid_dates > 0:
             df_clean = df_clean.dropna(subset=['Date'])
-            st.info(f"הוסרו {invalid_dates} שורות עם תאריכים לא תקינים")
+            st.info(f"Removed {invalid_dates} rows with invalid dates")
 
     # Standardize categories
     if 'Category' in df_clean.columns:
@@ -351,7 +368,7 @@ def clean_data(df):
     after_cleaning = len(df_clean)
 
     if before_cleaning != after_cleaning:
-        st.info(f"ניקוי נתונים: הוסרו {before_cleaning - after_cleaning} שורות עם נתונים חסרים")
+        st.info(f"Data Cleaning: Removed {before_cleaning - after_cleaning} rows with missing critical data")
 
     # Handle numeric columns
     numeric_columns = ['UnitsSold', 'Stock', 'RestockSpeedDays', 'DayOfWeek', 'Month', 'WeekOfYear']
@@ -374,7 +391,7 @@ def clean_data(df):
 
     if 'Category' in df_clean.columns:
         unique_categories = sorted(df_clean['Category'].unique())
-        st.success(f"קטגוריות מתוקננות: {', '.join(unique_categories)}")
+        st.success(f"Categories standardized: {', '.join(unique_categories)}")
 
     return df_clean
 
@@ -506,13 +523,13 @@ def classify_products_by_cv(df):
     stable_count = (product_stats_df['demand_group'] == 'stable').sum()
     volatile_count = (product_stats_df['demand_group'] == 'volatile').sum()
 
-    st.markdown(f"""
+    st.markdown("""
     <div class="alert-box alert-info">
-        <strong>סיווג מוצרים:</strong><br>
-        ביקוש יציב: {stable_count} מוצרים ({stable_count/len(product_stats_df)*100:.1f}%)<br>
-        ביקוש תנודתי: {volatile_count} מוצרים ({volatile_count/len(product_stats_df)*100:.1f}%)
+        <strong>Product Classification:</strong><br>
+        Stable demand: {stable_count} products ({stable_count/len(product_stats_df)*100:.1f}%)<br>
+        Volatile demand: {volatile_count} products ({volatile_count/len(product_stats_df)*100:.1f}%)
     </div>
-    """, unsafe_allow_html=True)
+    """.format(stable_count=stable_count, volatile_count=volatile_count), unsafe_allow_html=True)
 
     # Add classification to main dataset
     df = df.merge(product_stats_df[['SKU', 'demand_group', 'cv']], on='SKU', how='left')
@@ -522,7 +539,7 @@ def classify_products_by_cv(df):
 def build_random_forest_model(df_forecast):
     """Build Random Forest model for high variability products"""
     if len(df_forecast) < 15:
-        raise ValueError("נדרשים לפחות 15 רשומות לחיזוי אמין")
+        raise ValueError("Need at least 15 records for reliable forecasting")
 
     features = [
         'Month', 'DayOfWeek', 'WeekOfYear', 'Quarter', 'DayOfMonth',
@@ -570,119 +587,88 @@ def build_random_forest_model(df_forecast):
 def build_exponential_smoothing_model(df_product):
     """Build Enhanced Exponential Smoothing model for low variability products"""
     if len(df_product) < 10:
-        raise ValueError("נדרשים לפחות 10 רשומות לחלקה אקספוננציאלית")
+        raise ValueError("Need at least 10 records for Exponential Smoothing")
 
     df_product = df_product.sort_values('Date')
-    sales_series = df_product.set_index('Date')['UnitsSold']
+    
+    # Create a proper time series with daily frequency
+    df_product = df_product.set_index('Date')
+    
+    # If we have multiple sales per day, sum them
+    sales_series = df_product['UnitsSold'].resample('D').sum()
+    
+    # Fill missing dates with 0 (no sales)
+    sales_series = sales_series.fillna(0)
+    
+    # Remove leading and trailing zeros to focus on active period
+    non_zero_mask = sales_series > 0
+    if non_zero_mask.any():
+        first_sale = sales_series[non_zero_mask].index[0]
+        last_sale = sales_series[non_zero_mask].index[-1]
+        sales_series = sales_series[first_sale:last_sale]
+    
+    if len(sales_series) < 7:
+        raise ValueError("Insufficient data after cleaning - need at least 7 days")
 
-    # Resample to daily frequency and fill missing dates
-    sales_series = sales_series.resample('D').sum().fillna(0)
+    # Simple but robust exponential smoothing configurations
+    configs = [
+        # Basic configurations that usually work
+        {'trend': None, 'seasonal': None},
+        {'trend': 'add', 'seasonal': None},
+        {'trend': 'add', 'seasonal': None, 'damped_trend': True},
+    ]
     
-    # Remove leading zeros to avoid issues
-    first_non_zero = sales_series[sales_series > 0].index[0] if (sales_series > 0).any() else sales_series.index[0]
-    sales_series = sales_series[first_non_zero:]
-    
-    if len(sales_series) < 10:
-        raise ValueError("לא מספיק נתונים אחרי ניקוי")
+    # Add seasonal configurations only if we have enough data
+    if len(sales_series) >= 21:  # At least 3 weeks
+        configs.extend([
+            {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 7},
+            {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': True},
+        ])
 
     best_model = None
     best_mae = float('inf')
-    best_config = None
-
-    # רשימת תצורות משופרות לבדיקה
-    configs = [
-        # תצורות בסיסיות משופרות
-        {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': False},
-        {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': True},
-        {'trend': 'mul', 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': False},
-        {'trend': 'mul', 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': True},
-        
-        # תצורות עם עונתיות של 14 ימים (דו-שבועי)
-        {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 14, 'damped_trend': False},
-        {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 14, 'damped_trend': True},
-        
-        # תצורות ללא עונתיות עם טרנד מדוכא
-        {'trend': 'add', 'seasonal': None, 'damped_trend': True},
-        {'trend': 'mul', 'seasonal': None, 'damped_trend': True},
-        
-        # תצורות עם עונתיות חודשית (אם יש מספיק נתונים)
-        {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 30, 'damped_trend': False} if len(sales_series) >= 60 else None,
-        {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 30, 'damped_trend': True} if len(sales_series) >= 60 else None,
-    ]
-    
-    # הסר תצורות ריקות
-    configs = [config for config in configs if config is not None]
     
     for config in configs:
         try:
-            # הוסף פרמטרים מתקדמים לכוונון
-            smoothing_params = {
-                'smoothing_level': None,  # יותב אוטומטית
-                'smoothing_trend': None,  # יותב אוטומטית  
-                'smoothing_seasonal': None,  # יותב אוטומטית
-                'damping_trend': None if not config.get('damped_trend', False) else None,  # יותב אוטומטית
-                'use_boxcox': False,  # נמנע מטרנספורמציה מורכבת
-                'remove_bias': True,  # מסיר הטיה בחיזוי
-                'method': 'L-BFGS-B',  # שיטת אופטימיזציה משופרת
-                'maxiter': 1000,  # יותר איטרציות לכוונון טוב יותר
-            }
-            
-            # בניית המודל עם הפרמטרים המתקדמים
-            if config['seasonal'] is not None:
-                if len(sales_series) >= config['seasonal_periods'] * 2:
-                    model = ExponentialSmoothing(
-                        sales_series,
-                        trend=config['trend'],
-                        seasonal=config['seasonal'],
-                        seasonal_periods=config['seasonal_periods'],
-                        damped_trend=config.get('damped_trend', False)
-                    ).fit(**smoothing_params)
-                else:
-                    continue  # דלג על תצורה זו אם אין מספיק נתונים
+            # Build model with current configuration
+            if config.get('seasonal'):
+                model = ExponentialSmoothing(
+                    sales_series,
+                    trend=config.get('trend'),
+                    seasonal=config.get('seasonal'),
+                    seasonal_periods=config.get('seasonal_periods', 7),
+                    damped_trend=config.get('damped_trend', False)
+                ).fit(optimized=True, use_brute=True)
             else:
                 model = ExponentialSmoothing(
                     sales_series,
-                    trend=config['trend'],
+                    trend=config.get('trend'),
                     damped_trend=config.get('damped_trend', False)
-                ).fit(**smoothing_params)
+                ).fit(optimized=True, use_brute=True)
 
-            # חישוב מדדי שגיאה על נתוני האימון
+            # Calculate error
             fitted_values = model.fittedvalues
-            
-            # ודא שאין ערכים שליליים
-            fitted_values = np.maximum(fitted_values, 0)
+            fitted_values = np.maximum(fitted_values, 0)  # No negative values
             
             mae = mean_absolute_error(sales_series, fitted_values)
             
-            # שמור את המודל הטוב ביותר
             if mae < best_mae:
                 best_mae = mae
                 best_model = model
-                best_config = config
                 
         except Exception as e:
-            continue  # דלג על תצורות שגויות
+            continue  # Try next configuration
 
-    # אם לא נמצא מודל טוב, השתמש בגרסה פשוטה
+    # Fallback to simple exponential smoothing if all failed
     if best_model is None:
         try:
-            # מודל חלקה פשוט כגיבוי
-            best_model = ExponentialSmoothing(
-                sales_series, 
-                trend='add',
-                damped_trend=True
-            ).fit(
-                method='L-BFGS-B',
-                maxiter=1000,
-                remove_bias=True
-            )
-            best_config = {'trend': 'add', 'seasonal': None, 'damped_trend': True}
+            best_model = ExponentialSmoothing(sales_series).fit(optimized=True)
             fitted_values = np.maximum(best_model.fittedvalues, 0)
             best_mae = mean_absolute_error(sales_series, fitted_values)
         except:
-            raise ValueError("נכשל ببناء מודל חלקה אקספוננציאלית")
+            raise ValueError("Failed to build any Exponential Smoothing model")
 
-    # חישוב מדדי ביצועים סופיים
+    # Calculate final metrics
     fitted_values = np.maximum(best_model.fittedvalues, 0)
     mae = mean_absolute_error(sales_series, fitted_values)
     rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
@@ -691,8 +677,8 @@ def build_exponential_smoothing_model(df_product):
     return best_model, mae, rmse, mape
 
 # ========== Navigation ==========
-st.sidebar.markdown("<h2 class='sidebar-title'>ניווט במערכת</h2>", unsafe_allow_html=True)
-page = st.sidebar.radio("עבור אל:", ["דף הבית", "ניתוח נתונים", "ניתוח עונתיות", "חיזוי מכירות"])
+st.sidebar.markdown("<h2 class='sidebar-title'>System Navigation</h2>", unsafe_allow_html=True)
+page = st.sidebar.radio("Go to:", ["Dashboard", "Sales Analysis", "Seasonality Analysis", "Sales Forecasting"])
 
 # ========== Session State ==========
 if "df" not in st.session_state:
@@ -700,22 +686,22 @@ if "df" not in st.session_state:
 if "df_clean" not in st.session_state:
     st.session_state.df_clean = None
 
-# ========== HOME PAGE ==========
-if page == "דף הבית":
+# ========== DASHBOARD PAGE ==========
+if page == "Dashboard":
     st.markdown("""
-    <h1>פלטפורמת אנליטיקה מתקדמת - אהבה</h1>
-    <p class='page-subtitle'>מערכת ניתוח נתונים וחיזוי מכירות מקצועית</p>
+    <h1>Ahva Advanced Analytics Platform</h1>
+    <p class='page-subtitle'>Professional Data Analysis & Sales Forecasting System</p>
     <hr>
     """, unsafe_allow_html=True)
 
     st.markdown("""
     <div class="upload-area">
-        <h3 style="color: #667eea; margin-bottom: 1rem;">העלאת קובץ נתונים</h3>
-        <p style="color: #6c757d;">העלה את קובץ הנתונים שלך להתחלת הניתוח</p>
+        <h3 style="color: #667eea; margin-bottom: 1rem;">Data File Upload</h3>
+        <p style="color: #6c757d;">Upload your data file to begin comprehensive analysis</p>
     </div>
     """, unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("בחר קובץ Excel או CSV", type=["xlsx", "xls", "csv"], help="העלה את קובץ נתוני המכירות שלך")
+    uploaded_file = st.file_uploader("Select Excel or CSV file", type=["xlsx", "xls", "csv"], help="Upload your sales data file")
 
     if uploaded_file is not None:
         try:
@@ -732,25 +718,25 @@ if page == "דף הבית":
 
             st.markdown("""
             <div class="alert-box alert-success">
-                <strong>הקובץ הועלה ועובד בהצלחה!</strong><br>
-                המערכת מוכנה לניתוח מתקדם של הנתונים
+                <strong>File uploaded and processed successfully!</strong><br>
+                System ready for advanced data analysis
             </div>
             """, unsafe_allow_html=True)
 
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown("**סקירת נתונים גולמיים:**")
-                st.write(f"- שורות מקוריות: {len(df):,}")
-                st.write(f"- עמודות: {len(df.columns)}")
-                st.write(f"- גודל קובץ: {uploaded_file.size / 1024:.1f} KB")
+                st.markdown("**Raw Data Overview:**")
+                st.write(f"- Original rows: {len(df):,}")
+                st.write(f"- Columns: {len(df.columns)}")
+                st.write(f"- File size: {uploaded_file.size / 1024:.1f} KB")
 
             with col2:
-                st.markdown("**סקירת נתונים מעובדים:**")
-                st.write(f"- שורות מעובדות: {len(df_clean):,}")
-                st.write(f"- איכות נתונים: {(len(df_clean)/len(df)*100):.1f}%")
-                st.write(f"- מוכן לניתוח: ✅")
+                st.markdown("**Processed Data Overview:**")
+                st.write(f"- Processed rows: {len(df_clean):,}")
+                st.write(f"- Data quality: {(len(df_clean)/len(df)*100):.1f}%")
+                st.write(f"- Ready for analysis: ✅")
 
-            with st.expander("תצוגה מקדימה של הנתונים", expanded=False):
+            with st.expander("Data Preview", expanded=False):
                 st.dataframe(df_clean.head(10), use_container_width=True)
 
         except Exception as e:
@@ -764,7 +750,7 @@ if page == "דף הבית":
     if st.session_state.df_clean is not None:
         df = st.session_state.df_clean
 
-        st.markdown("<hr><div class='section-header'>סינון נתונים לפי תאריך</div>", unsafe_allow_html=True)
+        st.markdown("<hr><div class='section-header'>Date Range Filter</div>", unsafe_allow_html=True)
 
         if 'Date' in df.columns and not df['Date'].isna().all():
             min_date = df['Date'].min().date()
@@ -772,9 +758,9 @@ if page == "דף הבית":
 
             col1, col2 = st.columns(2)
             with col1:
-                start_date = st.date_input("תאריך התחלה", value=min_date, min_value=min_date, max_value=max_date)
+                start_date = st.date_input("Start Date", value=min_date, min_value=min_date, max_value=max_date)
             with col2:
-                end_date = st.date_input("תאריך סיום", value=max_date, min_value=min_date, max_value=max_date)
+                end_date = st.date_input("End Date", value=max_date, min_value=min_date, max_value=max_date)
 
             filtered_df = df[(df['Date'] >= pd.to_datetime(start_date)) & (df['Date'] <= pd.to_datetime(end_date))]
             if len(filtered_df) == 0:
@@ -783,7 +769,7 @@ if page == "דף הבית":
             filtered_df = df
 
         # KPI CALCULATIONS
-        st.markdown("<div class='section-header'>מדדי ביצוע מרכזיים</div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-header'>Key Performance Indicators</div>", unsafe_allow_html=True)
 
         total_products = filtered_df['Product'].nunique() if 'Product' in filtered_df.columns else 0
         total_stock = int(filtered_df['Stock'].sum()) if 'Stock' in filtered_df.columns else 0
@@ -803,31 +789,31 @@ if page == "דף הבית":
         st.markdown(f"""
         <div class="kpi-container">
             <div class="kpi-card">
-                <div class="kpi-title">סך ביקוש</div>
+                <div class="kpi-title">Total Demand</div>
                 <div class="kpi-value">{total_demand:,}</div>
-                <div class="kpi-subtext">יחידות נמכרו</div>
+                <div class="kpi-subtext">Units Sold</div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-title">יעילות מלאי</div>
+                <div class="kpi-title">Inventory Efficiency</div>
                 <div class="kpi-value">{efficiency:.1f}%</div>
-                <div class="kpi-subtext">יחס ביקוש/מלאי</div>
+                <div class="kpi-subtext">Demand/Stock Ratio</div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-title">שיעור מחסור</div>
+                <div class="kpi-title">Shortage Rate</div>
                 <div class="kpi-value">{shortage_rate:.1f}%</div>
-                <div class="kpi-subtext">יחידות חסרות/סך ביקוש</div>
+                <div class="kpi-subtext">Missing Units/Total Demand</div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-title">מוצרים פעילים</div>
+                <div class="kpi-title">Active Products</div>
                 <div class="kpi-value">{total_products}</div>
-                <div class="kpi-subtext">מוצרים ייחודיים</div>
+                <div class="kpi-subtext">Unique Products</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-# ========== ANALYSIS PAGE ==========
-elif page == "ניתוח נתונים":
-    st.markdown("<h1>ניתוח מכירות וביקוש</h1><hr>", unsafe_allow_html=True)
+# ========== SALES ANALYSIS PAGE ==========
+elif page == "Sales Analysis":
+    st.markdown("<h1>Sales & Demand Analysis</h1><hr>", unsafe_allow_html=True)
 
     if st.session_state.df_clean is not None:
         df = st.session_state.df_clean.copy()
@@ -835,12 +821,12 @@ elif page == "ניתוח נתונים":
         if 'Category' not in df.columns or 'UnitsSold' not in df.columns:
             st.markdown("""
             <div class="alert-box alert-danger">
-                <strong>שגיאה:</strong> חסרות עמודות נדרשות: Category, UnitsSold
+                <strong>Error:</strong> Missing required columns: Category, UnitsSold
             </div>
             """, unsafe_allow_html=True)
         else:
             # Sales by Category with Interactive Plotly Charts
-            st.markdown("<div class='section-header'>התפלגות מכירות לפי קטגוריה</div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-header'>Sales Distribution by Category</div>", unsafe_allow_html=True)
             category_sales = df.groupby("Category")["UnitsSold"].agg(['sum', 'mean', 'count']).reset_index()
             category_sales.columns = ['Category', 'Total_Sales', 'Avg_Sales', 'Records']
 
@@ -852,8 +838,8 @@ elif page == "ניתוח נתונים":
                     x="Category",
                     y="Total_Sales",
                     color="Total_Sales",
-                    title="סך יחידות נמכרו לפי קטגוריה",
-                    labels={"Total_Sales": "סך יחידות נמכרו", "Category": "קטגוריה"},
+                    title="Total Units Sold by Category",
+                    labels={"Total_Sales": "Total Units Sold", "Category": "Category"},
                     color_continuous_scale="Blues",
                     text="Total_Sales"
                 )
@@ -866,7 +852,7 @@ elif page == "ניתוח נתונים":
                     category_sales,
                     values="Total_Sales",
                     names="Category",
-                    title="התפלגות מכירות (%)",
+                    title="Sales Distribution (%)",
                     color_discrete_sequence=px.colors.qualitative.Set3
                 )
                 fig_pie.update_traces(textposition='inside', textinfo='percent+label')
@@ -874,41 +860,36 @@ elif page == "ניתוח נתונים":
                 st.plotly_chart(fig_pie, use_container_width=True)
 
             st.markdown("<div class='data-table'>", unsafe_allow_html=True)
-            st.markdown("**סיכום ביצועי קטגוריות:**")
+            st.markdown("**Category Performance Summary:**")
             category_sales['Avg_Sales'] = category_sales['Avg_Sales'].round(1)
             st.dataframe(category_sales, use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
             # Time-based analysis
             if 'Date' in df.columns and not df['Date'].isna().all():
-                st.markdown("<hr><div class='section-header'>מגמות מכירות לאורך זמן</div>", unsafe_allow_html=True)
+                st.markdown("<hr><div class='section-header'>Sales Trends Over Time</div>", unsafe_allow_html=True)
 
                 daily_sales = df.groupby('Date')['UnitsSold'].sum().reset_index()
                 fig_trend = px.line(
                     daily_sales,
                     x='Date',
                     y='UnitsSold',
-                    title='מגמת מכירות יומית',
-                    labels={'UnitsSold': 'יחידות נמכרו', 'Date': 'תאריך'}
+                    title='Daily Sales Trend',
+                    labels={'UnitsSold': 'Units Sold', 'Date': 'Date'}
                 )
                 fig_trend.update_traces(line_color='#667eea', line_width=3)
                 fig_trend.update_layout(height=400)
                 st.plotly_chart(fig_trend, use_container_width=True)
 
-                st.markdown("<div class='section-header'>ניתוח דפוסי מכירות</div>", unsafe_allow_html=True)
+                st.markdown("<div class='section-header'>Sales Pattern Analysis</div>", unsafe_allow_html=True)
 
                 col1, col2 = st.columns(2)
 
                 with col1:
                     df['DayName'] = df['Date'].dt.day_name()
-                    day_mapping = {
-                        'Monday': 'שני', 'Tuesday': 'שלישי', 'Wednesday': 'רביעי', 
-                        'Thursday': 'חמישי', 'Friday': 'שישי', 'Saturday': 'שבת', 'Sunday': 'ראשון'
-                    }
-                    df['DayName'] = df['DayName'].map(day_mapping)
                     daily_pattern = df.groupby('DayName')['UnitsSold'].sum().reset_index()
 
-                    day_order = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
+                    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
                     daily_pattern['DayName'] = pd.Categorical(daily_pattern['DayName'], categories=day_order, ordered=True)
                     daily_pattern = daily_pattern.sort_values('DayName')
 
@@ -916,8 +897,8 @@ elif page == "ניתוח נתונים":
                         daily_pattern,
                         x='DayName',
                         y='UnitsSold',
-                        title="מכירות לפי יום בשבוע",
-                        labels={'UnitsSold': 'יחידות נמכרו', 'DayName': 'יום בשבוע'},
+                        title="Sales by Day of Week",
+                        labels={'UnitsSold': 'Units Sold', 'DayName': 'Day of Week'},
                         color='UnitsSold',
                         color_continuous_scale='Blues'
                     )
@@ -934,8 +915,8 @@ elif page == "ניתוח נתונים":
                         x='Total_Sales',
                         y='Product',
                         orientation='h',
-                        title='10 המוצרים המובילים במכירות',
-                        labels={'Total_Sales': 'סך מכירות', 'Product': 'מוצר'},
+                        title='Top 10 Products by Sales',
+                        labels={'Total_Sales': 'Total Sales', 'Product': 'Product'},
                         color='Total_Sales',
                         color_continuous_scale='Viridis'
                     )
@@ -945,13 +926,13 @@ elif page == "ניתוח נתונים":
     else:
         st.markdown("""
         <div class="alert-box alert-warning">
-            <strong>התראה:</strong> אנא העלה קובץ נתונים בדף הבית תחילה
+            <strong>Warning:</strong> Please upload a data file on the Dashboard page first
         </div>
         """, unsafe_allow_html=True)
 
-# ========== SEASONALITY PAGE ==========
-elif page == "ניתוח עונתיות":
-    st.markdown("<h1>ניתוח עונתיות</h1><hr>", unsafe_allow_html=True)
+# ========== SEASONALITY ANALYSIS PAGE ==========
+elif page == "Seasonality Analysis":
+    st.markdown("<h1>Seasonality Analysis</h1><hr>", unsafe_allow_html=True)
 
     if st.session_state.df_clean is not None:
         df = st.session_state.df_clean.copy()
@@ -959,34 +940,32 @@ elif page == "ניתוח עונתיות":
         if 'Product' not in df.columns or 'UnitsSold' not in df.columns or 'Date' not in df.columns:
             st.markdown("""
             <div class="alert-box alert-danger">
-                <strong>שגיאה:</strong> חסרות עמודות נדרשות: Product, UnitsSold, Date
+                <strong>Error:</strong> Missing required columns: Product, UnitsSold, Date
             </div>
             """, unsafe_allow_html=True)
         elif df['Date'].isna().all():
             st.markdown("""
             <div class="alert-box alert-danger">
-                <strong>שגיאה:</strong> עמודת התאריך לא מכילה תאריכים תקינים
+                <strong>Error:</strong> Date column contains no valid dates
             </div>
             """, unsafe_allow_html=True)
         else:
             products = df['Product'].unique()
-            selected_product = st.selectbox("בחר מוצר לניתוח:", products)
+            selected_product = st.selectbox("Select Product for Analysis:", products)
 
             product_data = df[df['Product'] == selected_product].copy()
 
             if len(product_data) == 0:
                 st.markdown("""
                 <div class="alert-box alert-warning">
-                    <strong>התראה:</strong> לא נמצאו נתונים למוצר שנבחר
+                    <strong>Warning:</strong> No data found for selected product
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                st.markdown(f"<div class='section-header'>ניתוח עונתיות עבור {selected_product}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='section-header'>Seasonality Analysis for {selected_product}</div>", unsafe_allow_html=True)
 
                 product_data['Month'] = product_data['Date'].dt.month
-                month_names = {1: 'ינואר', 2: 'פברואר', 3: 'מרץ', 4: 'אפריל', 5: 'מאי', 6: 'יוני',
-                              7: 'יולי', 8: 'אוגוסט', 9: 'ספטמבר', 10: 'אוקטובר', 11: 'נובמבר', 12: 'דצמבר'}
-                product_data['MonthName'] = product_data['Month'].map(month_names)
+                product_data['MonthName'] = product_data['Date'].dt.month_name()
                 monthly_sales = product_data.groupby(['Month', 'MonthName'])['UnitsSold'].sum().reset_index()
                 monthly_sales.columns = ['Month', 'MonthName', 'Total_Sales']
 
@@ -995,8 +974,8 @@ elif page == "ניתוח עונתיות":
                     x='MonthName',
                     y='Total_Sales',
                     markers=True,
-                    title=f"דפוס מכירות חודשי עבור {selected_product}",
-                    labels={'Total_Sales': 'סך יחידות נמכרו', 'MonthName': 'חודש'}
+                    title=f"Monthly Sales Pattern for {selected_product}",
+                    labels={'Total_Sales': 'Total Units Sold', 'MonthName': 'Month'}
                 )
                 fig_monthly.update_traces(line_color='#667eea', marker_size=10, line_width=4)
                 fig_monthly.update_layout(height=400)
@@ -1004,30 +983,25 @@ elif page == "ניתוח עונתיות":
 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("סך מכירות", f"{product_data['UnitsSold'].sum():,.0f}")
+                    st.metric("Total Sales", f"{product_data['UnitsSold'].sum():,.0f}")
                 with col2:
                     if len(monthly_sales) > 0:
                         peak_month = monthly_sales.loc[monthly_sales['Total_Sales'].idxmax(), 'MonthName']
-                        st.metric("חודש שיא", peak_month)
+                        st.metric("Peak Month", peak_month)
                 with col3:
                     avg_monthly = monthly_sales['Total_Sales'].mean()
-                    st.metric("ממוצע חודשי", f"{avg_monthly:.1f}")
+                    st.metric("Monthly Average", f"{avg_monthly:.1f}")
                 with col4:
                     if len(monthly_sales) > 0:
                         peak_ratio = monthly_sales['Total_Sales'].max() / monthly_sales['Total_Sales'].mean()
-                        st.metric("מדד עונתיות", f"{peak_ratio:.1f}x")
+                        st.metric("Seasonality Index", f"{peak_ratio:.1f}x")
 
-                st.markdown("<hr><div class='section-header'>דפוס מכירות שבועי</div>", unsafe_allow_html=True)
+                st.markdown("<hr><div class='section-header'>Weekly Sales Pattern</div>", unsafe_allow_html=True)
 
                 product_data['DayOfWeek'] = product_data['Date'].dt.day_name()
-                day_mapping = {
-                    'Monday': 'שני', 'Tuesday': 'שלישי', 'Wednesday': 'רביעי', 
-                    'Thursday': 'חמישי', 'Friday': 'שישי', 'Saturday': 'שבת', 'Sunday': 'ראשון'
-                }
-                product_data['DayOfWeek'] = product_data['DayOfWeek'].map(day_mapping)
                 weekly_sales = product_data.groupby('DayOfWeek')['UnitsSold'].sum().reset_index()
 
-                day_order = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
+                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
                 weekly_sales['DayOfWeek'] = pd.Categorical(weekly_sales['DayOfWeek'], categories=day_order, ordered=True)
                 weekly_sales = weekly_sales.sort_values('DayOfWeek')
 
@@ -1035,8 +1009,8 @@ elif page == "ניתוח עונתיות":
                     weekly_sales,
                     x='DayOfWeek',
                     y='UnitsSold',
-                    title=f"דפוס מכירות שבועי עבור {selected_product}",
-                    labels={'UnitsSold': 'יחידות נמכרו', 'DayOfWeek': 'יום בשבוע'},
+                    title=f"Weekly Sales Pattern for {selected_product}",
+                    labels={'UnitsSold': 'Units Sold', 'DayOfWeek': 'Day of Week'},
                     color='UnitsSold',
                     color_continuous_scale='Blues'
                 )
@@ -1046,49 +1020,49 @@ elif page == "ניתוח עונתיות":
     else:
         st.markdown("""
         <div class="alert-box alert-warning">
-            <strong>התראה:</strong> אנא העלה קובץ נתונים בדף הבית תחילה
+            <strong>Warning:</strong> Please upload a data file on the Dashboard page first
         </div>
         """, unsafe_allow_html=True)
 
-# ========== FORECASTING PAGE ==========
-elif page == "חיזוי מכירות":
-    st.markdown("<h1>חיזוי מכירות מתקדם</h1><hr>", unsafe_allow_html=True)
+# ========== SALES FORECASTING PAGE ==========
+elif page == "Sales Forecasting":
+    st.markdown("<h1>Advanced Sales Forecasting</h1><hr>", unsafe_allow_html=True)
 
     if st.session_state.df_clean is not None:
         df = st.session_state.df_clean.copy()
 
-        st.markdown("<div class='section-header'>מנוע חיזוי בלמידת מכונה מתקדמת</div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-header'>Advanced Machine Learning Prediction Engine</div>", unsafe_allow_html=True)
 
         if len(df) < 15:
             st.markdown("""
             <div class="alert-box alert-danger">
-                <strong>שגיאה:</strong> נתונים לא מספיקים לחיזוי אמין. נדרשים לפחות 15 רשומות.<br>
-                נסה להעלות יותר נתונים היסטוריים לתחזיות טובות יותר.
+                <strong>Error:</strong> Insufficient data for reliable forecasting. Need at least 15 records.<br>
+                Try uploading more historical data for better predictions.
             </div>
             """, unsafe_allow_html=True)
         else:
             # Model selection
-            st.markdown("**בחירת שיטת חיזוי:**")
+            st.markdown("**Select Forecasting Method:**")
             col1, col2 = st.columns(2)
 
             with col1:
-                model_type = st.selectbox("בחר מודל:",
-                    ["למידת מכונה מתקדמת (מומלץ)", "גיבוי סטטיסטי"],
-                    help="למידת מכונה משתמשת ב-Random Forest עם 20+ תכונות. גיבוי סטטיסטי משתמש בניתוח מגמות."
+                model_type = st.selectbox("Choose Model:",
+                    ["Advanced ML (Recommended)", "Statistical Backup"],
+                    help="Advanced ML uses Random Forest with 20+ features. Statistical backup uses trend analysis."
                 )
 
             with col2:
-                confidence_level = st.selectbox("רמת ביטחון:",
-                    ["גבוהה (±10%)", "בינונית (±15%)", "נמוכה (±20%)"],
+                confidence_level = st.selectbox("Confidence Level:",
+                    ["High (±10%)", "Medium (±15%)", "Low (±20%)"],
                     index=1,
-                    help="ביטחון גבוה יותר = רצועות חיזוי צרות יותר"
+                    help="Higher confidence = narrower prediction bands"
                 )
 
             # Extract confidence percentage
-            confidence_pct = {"גבוהה (±10%)": 0.10, "בינונית (±15%)": 0.15, "נמוכה (±20%)": 0.20}[confidence_level]
+            confidence_pct = {"High (±10%)": 0.10, "Medium (±15%)": 0.15, "Low (±20%)": 0.20}[confidence_level]
 
-            if model_type == "למידת מכונה מתקדמת (מומלץ)":
-                with st.spinner("בונה מודל Random Forest משופר עם 20+ תכונות..."):
+            if model_type == "Advanced ML (Recommended)":
+                with st.spinner("Building enhanced Random Forest model with 20+ features..."):
                     try:
                         # Prepare enhanced data
                         df_forecast = prepare_forecast_data_enhanced(df)
@@ -1099,41 +1073,41 @@ elif page == "חיזוי מכירות":
                         # Display enhanced model performance
                         st.markdown("""
                         <div class="alert-box alert-success">
-                            <strong>מודל Random Forest משופר אומן בהצלחה!</strong>
+                            <strong>Enhanced Random Forest model trained successfully!</strong>
                         </div>
                         """, unsafe_allow_html=True)
 
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("MAE", f"{mae:.2f}", help="שגיאה ממוצעת מוחלטת")
+                            st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
                         with col2:
-                            st.metric("RMSE", f"{rmse:.2f}", help="שורש השגיאה הריבועית הממוצעת")
+                            st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
                         with col3:
-                            st.metric("MAPE", f"{mape:.1f}%", help="שגיאה אחוזית ממוצעת מוחלטת")
+                            st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
 
                         # Model quality assessment
                         if mape < 10:
                             st.markdown("""
                             <div class="alert-box alert-success">
-                                איכות מודל מעולה! ביטחון גבוה בתחזיות.
+                                Excellent model quality! High confidence in predictions.
                             </div>
                             """, unsafe_allow_html=True)
                         elif mape < 20:
                             st.markdown("""
                             <div class="alert-box alert-info">
-                                איכות מודל טובה. תחזיות אמינות צפויות.
+                                Good model quality. Reliable predictions expected.
                             </div>
                             """, unsafe_allow_html=True)
                         elif mape < 30:
                             st.markdown("""
                             <div class="alert-box alert-warning">
-                                איכות מודל בינונית. השתמש בתחזיות בזהירות.
+                                Moderate model quality. Use predictions with caution.
                             </div>
                             """, unsafe_allow_html=True)
                         else:
                             st.markdown("""
                             <div class="alert-box alert-danger">
-                                איכות מודל ירודה. שקול להשתמש בשיטת הגיבוי הסטטיסטי.
+                                Poor model quality. Consider using Statistical Backup method.
                             </div>
                             """, unsafe_allow_html=True)
 
@@ -1142,43 +1116,24 @@ elif page == "חיזוי מכירות":
                     except Exception as e:
                         st.markdown(f"""
                         <div class="alert-box alert-danger">
-                            <strong>מודל למידת מכונה נכשל:</strong> {str(e)}
+                            <strong>ML model failed:</strong> {str(e)}
                         </div>
                         """, unsafe_allow_html=True)
                         st.stop()
             else:
                 st.markdown("""
                 <div class="alert-box alert-danger">
-                    שיטת הגיבוי הסטטיסטי הושבתה. אנא השתמש בשיטת למידת המכונה המתקדמת.
+                    Statistical backup method has been disabled. Please use Advanced ML method.
                 </div>
                 """, unsafe_allow_html=True)
                 st.stop()
 
             # Product selection for forecasting
-            st.markdown("<hr><div class='section-header'>יצירת חיזוי ל-14 ימים</div>", unsafe_allow_html=True)
+            st.markdown("<hr><div class='section-header'>Generate 14-Day Forecast</div>", unsafe_allow_html=True)
 
-            selected_product = st.selectbox("בחר מוצר:", df['Product'].unique())
+            selected_product = st.selectbox("Select Product:", df['Product'].unique())
 
-            if st.button("צור חיזוי ל-14 ימים", type="primary"):
-                try:
-                    # Fixed 14-day forecast period
-                    forecast_days = 14
-
-                    # Product data validation
-                    product_data = df[df['Product'] == selected_product]
-                    if len(product_data) < 5:
-                        st.markdown(f"""
-                        <div class="alert-box alert-danger">
-                            <strong>שגיאה:</strong> נתונים לא מספיקים עבור {selected_product}. נדרשים לפחות 5 רשומות.
-                        </div>
-                        """, unsafe_allow_html=True)
-                        st.stop()
-
-                    product_info = product_data.iloc[-1]
-
-                    # Get CV from the predefined mapping
-                    product_sku = product_data['SKU'].iloc[0]
-
+            if st.button("Generate 14-Day Forecast", type="primary"):
                     # Get CV from the classification data
                     if 'cv' in product_data.columns and not product_data['cv'].isna().all():
                         cv = product_data['cv'].iloc[0]
@@ -1192,12 +1147,12 @@ elif page == "חיזוי מכירות":
                         # Use Exponential Smoothing for stable demand
                         st.markdown("""
                         <div class="forecast-section">
-                            <div class='section-header'>תוצאות חיזוי בחלקה אקספוננציאלית</div>
+                            <div class='section-header'>Exponential Smoothing Forecast Results</div>
                         """, unsafe_allow_html=True)
                         
                         st.markdown(f"""
                         <div class="alert-box alert-info">
-                            משתמש בחלקה אקספוננציאלית (CV = {cv:.3f} ≤ 0.5 - ביקוש יציב)
+                            Using Exponential Smoothing (CV = {cv:.3f} ≤ 0.5 - Stable Demand)
                         </div>
                         """, unsafe_allow_html=True)
 
@@ -1222,16 +1177,16 @@ elif page == "חיזוי מכירות":
                             # Display model performance
                             col1, col2, col3 = st.columns(3)
                             with col1:
-                                st.metric("MAE", f"{mae:.2f}", help="שגיאה ממוצעת מוחלטת")
+                                st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
                             with col2:
-                                st.metric("RMSE", f"{rmse:.2f}", help="שורש השגיאה הריבועית הממוצעת")
+                                st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
                             with col3:
-                                st.metric("MAPE", f"{mape:.1f}%", help="שגיאה אחוזית ממוצעת מוחלטת")
+                                st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
 
                         except Exception as e:
                             st.markdown(f"""
                             <div class="alert-box alert-danger">
-                                <strong>חלקה אקספוננציאלית נכשלה:</strong> {str(e)}
+                                <strong>Exponential Smoothing failed:</strong> {str(e)}
                             </div>
                             """, unsafe_allow_html=True)
                             st.stop()
@@ -1239,12 +1194,12 @@ elif page == "חיזוי מכירות":
                         # Use Random Forest for volatile demand
                         st.markdown("""
                         <div class="forecast-section">
-                            <div class='section-header'>תוצאות חיזוי בלמידת מכונה מתקדמת</div>
+                            <div class='section-header'>Advanced ML Forecast Results</div>
                         """, unsafe_allow_html=True)
                         
                         st.markdown(f"""
                         <div class="alert-box alert-info">
-                            משתמש ב-Random Forest (CV = {cv:.3f} > 0.5 - ביקוש תנודתי)
+                            Using Random Forest (CV = {cv:.3f} > 0.5 - Volatile Demand)
                         </div>
                         """, unsafe_allow_html=True)
 
@@ -1318,7 +1273,7 @@ elif page == "חיזוי מכירות":
                             future_df['Predicted_Sales'] = enhanced_predictions
                             st.markdown("""
                             <div class="alert-box alert-info">
-                                תחזיות משופרות עם דפוסים היסטוריים של ימי השבוע
+                                Enhanced predictions with historical day-of-week patterns
                             </div>
                             """, unsafe_allow_html=True)
 
@@ -1350,16 +1305,16 @@ elif page == "חיזוי מכירות":
                         # Display product-specific model performance
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("MAE", f"{product_mae:.2f}", help="שגיאה ממוצעת מוחלטת עבור מוצר זה")
+                            st.metric("MAE", f"{product_mae:.2f}", help="Mean Absolute Error for this product")
                         with col2:
-                            st.metric("RMSE", f"{product_rmse:.2f}", help="שורש השגיאה הריבועית הממוצעת עבור מוצר זה")
+                            st.metric("RMSE", f"{product_rmse:.2f}", help="Root Mean Square Error for this product")
                         with col3:
-                            st.metric("MAPE", f"{product_mape:.1f}%", help="שגיאה אחוזית ממוצעת מוחלטת עבור מוצר זה")
+                            st.metric("MAPE", f"{product_mape:.1f}%", help="Mean Absolute Percentage Error for this product")
 
                     st.markdown("</div>", unsafe_allow_html=True)
 
                     # Display results
-                    st.markdown("<div class='section-header'>ניתוח חיזוי ל-14 ימים</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='section-header'>14-Day Forecast Analysis</div>", unsafe_allow_html=True)
 
                     # Business metrics
                     total_7_days = future_df['Predicted_Sales'].head(7).sum()
@@ -1369,39 +1324,39 @@ elif page == "חיזוי מכירות":
                     # GET CURRENT STOCK
                     current_stock = float(product_info['Stock'])
 
-                    st.markdown("<div class='section-header'>ניתוח תכנון מלאי</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='section-header'>Inventory Planning Analysis</div>", unsafe_allow_html=True)
 
                     col1, col2, col3, col4 = st.columns(4)
 
                     with col1:
                         st.metric(
-                            "מלאי נוכחי",
-                            f"{current_stock:.0f} יחידות",
-                            help="רמת המלאי הנוכחית שלך"
+                            "Current Stock",
+                            f"{current_stock:.0f} units",
+                            help="Your actual current inventory level"
                         )
                     with col2:
                         st.metric(
-                            "חיזוי 7 ימים",
-                            f"{total_7_days:.0f} יחידות",
-                            help="מכירות צפויות לשבוע הבא"
+                            "7-Day Forecast",
+                            f"{total_7_days:.0f} units",
+                            help="Predicted sales for next week"
                         )
                     with col3:
                         st.metric(
-                            "חיזוי 14 ימים",
-                            f"{total_14_days:.0f} יחידות",
-                            help="מכירות צפויות ל-2 השבועות הבאים"
+                            "14-Day Forecast",
+                            f"{total_14_days:.0f} units",
+                            help="Predicted sales for next 2 weeks"
                         )
                     with col4:
                         remaining_after_14_days = current_stock - total_14_days
                         st.metric(
-                            "מלאי אחרי 14 ימים",
-                            f"{remaining_after_14_days:.0f} יחידות",
+                            "Stock After 14 Days",
+                            f"{remaining_after_14_days:.0f} units",
                             delta=f"{remaining_after_14_days - current_stock:.0f}",
-                            help="מלאי צפוי שנותר אחרי שבועיים"
+                            help="Expected remaining stock after 2 weeks"
                         )
 
                     # PRACTICAL BUSINESS RECOMMENDATIONS
-                    st.markdown("<div class='section-header'>המלצות הזמנה חכמות</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='section-header'>Smart Ordering Recommendations</div>", unsafe_allow_html=True)
 
                     # Calculate different scenarios
                     remaining_after_7_days = current_stock - total_7_days
@@ -1413,6 +1368,132 @@ elif page == "חיזוי מכירות":
                     if remaining_after_7_days <= 0:
                         # Critical - will run out within a week
                         shortage_7_days = abs(remaining_after_7_days)
+                        recommended_order = shortage_7_days + total_14_days + safety_stock_needed
+                        st.markdown(f"""
+                        <div class="alert-box alert-danger">
+                            <strong>CRITICAL SHORTAGE ALERT</strong><br>
+                            - You will run out of stock in <strong>less than 7 days</strong><br>
+                            - Shortage in 7 days: <strong>{shortage_7_days:.0f} units</strong><br>
+                            - <strong>URGENT ORDER NEEDED: {recommended_order:.0f} units</strong><br>
+                            - This covers the shortage + next 14 days + safety buffer
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    elif remaining_after_14_days <= 0:
+                        # Will run out within 2 weeks
+                        shortage_14_days = abs(remaining_after_14_days)
+                        recommended_order = shortage_14_days + safety_stock_needed
+                        st.markdown(f"""
+                        <div class="alert-box alert-warning">
+                            <strong>ORDER RECOMMENDED</strong><br>
+                            - Current stock will last: <strong>{(current_stock / avg_per_day):.1f} days</strong><br>
+                            - Will run short in 14 days by: <strong>{shortage_14_days:.0f} units</strong><br>
+                            - <strong>RECOMMENDED ORDER: {recommended_order:.0f} units</strong><br>
+                            - This covers the shortage + safety buffer
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    elif remaining_after_14_days <= safety_stock_needed:
+                        # Low stock after 2 weeks
+                        recommended_order = total_14_days  # Restock for next 2 weeks
+                        st.markdown(f"""
+                        <div class="alert-box alert-info">
+                            <strong>PLAN AHEAD</strong><br>
+                            - Stock after 14 days: <strong>{remaining_after_14_days:.0f} units</strong> (low)<br>
+                            - <strong>SUGGESTED ORDER: {recommended_order:.0f} units</strong><br>
+                            - This maintains healthy inventory levels<br>
+                            - Order timing: <strong>Within next week</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    else:
+                        # Stock is sufficient
+                        days_stock_will_last = current_stock / avg_per_day
+                        st.markdown(f"""
+                        <div class="alert-box alert-success">
+                            <strong>STOCK STATUS: GOOD</strong><br>
+                            - Current stock will last: <strong>{days_stock_will_last:.1f} days</strong><br>
+                            - After 14 days you'll have: <strong>{remaining_after_14_days:.0f} units</strong><br>
+                            - <strong>NO IMMEDIATE ORDER NEEDED</strong><br>
+                            - Next review recommended: <strong>In 1 week</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    # Additional insights
+                    st.markdown("<div class='section-header'>Business Summary</div>", unsafe_allow_html=True)
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Quick Status Check:**")
+                        days_stock_will_last = current_stock / avg_per_day if avg_per_day > 0 else 0
+
+                        if days_stock_will_last >= 21:
+                            status_class = "alert-success"
+                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Well covered"
+                        elif days_stock_will_last >= 14:
+                            status_class = "alert-info"
+                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Good for now"
+                        elif days_stock_will_last >= 7:
+                            status_class = "alert-warning"
+                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Plan to reorder soon"
+                        else:
+                            status_class = "alert-danger"
+                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Order immediately!"
+
+                        st.markdown(f"""
+                        <div class="alert-box {status_class}">
+                            {status_text}
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    with col2:
+                        st.markdown("**Sales Value:**")
+                        st.write("Add price information to enable revenue calculations")
+
+                    # FORECAST CHART ONLY
+                    st.markdown("<div class='section-header'>14-Day Forecast Chart</div>", unsafe_allow_html=True)
+
+                    fig = go.Figure()
+
+                    # ONLY forecast data
+                    fig.add_trace(go.Scatter(
+                        x=future_df['Date'],
+                        y=future_df['Predicted_Sales'],
+                        mode='lines+markers',
+                        name='14-Day Forecast',
+                        line=dict(color='#667eea', width=3),
+                        marker=dict(size=6, color='#667eea')
+                    ))
+
+                    # Clean layout
+                    fig.update_layout(
+                        title=f'Sales Forecast: {selected_product}',
+                        xaxis_title='Date',
+                        yaxis_title='Predicted Units',
+                        height=400,
+                        showlegend=False
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                except Exception as e:
+                    st.markdown(f"""
+                    <div class="alert-box alert-danger">
+                        <strong>Error generating forecast:</strong> {str(e)}<br><br>
+                        <strong>Debug Info:</strong><br>
+                        - Product: {selected_product}<br>
+                        - Data points: {len(product_data)}<br>
+                        - Date range: {product_data['Date'].min()} to {product_data['Date'].max()}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    else:
+        st.markdown("""
+        <div class="alert-box alert-warning">
+            <strong>Warning:</strong> Please upload and clean your data on the Dashboard page first
+        </div>
+        """, unsafe_allow_html=True)days)
                         recommended_order = shortage_7_days + total_14_days + safety_stock_needed
                         st.markdown(f"""
                         <div class="alert-box alert-danger">
@@ -1542,31 +1623,31 @@ elif page == "חיזוי מכירות":
 
 # ========== Sidebar ==========
 st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-st.sidebar.subheader("כלי נתונים")
+st.sidebar.subheader("Data Tools")
 
 if st.session_state.df_clean is not None:
-    if st.sidebar.button("ייצא נתונים"):
+    if st.sidebar.button("Export Data"):
         csv = st.session_state.df_clean.to_csv(index=False)
         st.sidebar.download_button(
-            label="הורד CSV",
+            label="Download CSV",
             data=csv,
             file_name=f"ahva_data_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
         )
 
 st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-st.sidebar.markdown("**פלטפורמת אהבה v3.0**")
-st.sidebar.markdown("*מערכת ניתוח מתקדמת*")
-st.sidebar.markdown("נבנה עם Streamlit ו-scikit-learn")
+st.sidebar.markdown("**Ahva Analytics Platform v3.0**")
+st.sidebar.markdown("*Advanced Analytics System*")
+st.sidebar.markdown("Built with Streamlit & scikit-learn")
 
 if st.session_state.df_clean is not None:
     st.sidebar.markdown("""
     <div class="status-badge badge-success">
-        מערכת מוכנה!
+        System Ready!
     </div>
     """, unsafe_allow_html=True)
     st.sidebar.markdown("""
     <div class="status-badge badge-success">
-        חיזוי ML פעיל
+        ML Forecasting Active
     </div>
     """, unsafe_allow_html=True)
