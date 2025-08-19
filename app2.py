@@ -910,10 +910,6 @@ elif page == "Forecasting":
                         - After 14 days you'll have: **{remaining_after_14_days:.0f} units**
                         - **NO IMMEDIATE ORDER NEEDED**
                         - Next review recommended: **In 1 week**
-                        """)stock_will_last:.1f} days**
-                        - After 14 days you'll have: **{remaining_after_14_days:.0f} units**
-                        - **NO IMMEDIATE ORDER NEEDED**
-                        - Next review recommended: **In 1 week**
                         """)
                     
                     # Additional insights
@@ -958,68 +954,6 @@ elif page == "Forecasting":
                     # Clean layout
                     fig.update_layout(
                         title=f'Sales Forecast: {selected_product}',
-                        xaxis_title='Date',
-                        yaxis_title='Predicted Units',
-                        height=400,
-                        showlegend=False
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                except Exception as e:
-                    st.error(f"Error generating forecast: {str(e)}")
-                    st.write("**Debug Info:**")
-                    st.write(f"- Product: {selected_product}")
-                    st.write(f"- Data points: {len(product_data)}")
-                    st.write(f"- Date range: {product_data['Date'].min()} to {product_data['Date'].max()}")
-    
-    else:
-        st.warning("Please upload and clean your data in the HOME page first.")stock_will_last:.1f} days**
-                        - After 14 days you'll have: **{remaining_after_14_days:.0f} units**
-                        - **NO IMMEDIATE ORDER NEEDED**
-                        - Next review recommended: **In 1 week**
-                        """)
-                    
-                    st.markdown("---")
-                    st.markdown("### Business Summary")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("**Quick Status Check:**")
-                        days_stock_will_last = current_stock / avg_per_day if avg_per_day > 0 else 0
-                        
-                        if days_stock_will_last >= 21:
-                            st.success(f"✅ **{days_stock_will_last:.0f} days of stock** - You're well covered")
-                        elif days_stock_will_last >= 14:
-                            st.info(f"📊 **{days_stock_will_last:.0f} days of stock** - Good for now")
-                        elif days_stock_will_last >= 7:
-                            st.warning(f"⚠️ **{days_stock_will_last:.0f} days of stock** - Plan to reorder soon")
-                        else:
-                            st.error(f"🚨 **{days_stock_will_last:.0f} days of stock** - Order immediately!")
-                    
-                    with col2:
-                        st.markdown("**Model Information:**")
-                        st.write(f"**Model Used:** {model_type}")
-                        st.write(f"**Coefficient of Variation:** {cv:.3f}")
-                        st.write(f"**Data Points Used:** {len(product_data)}")
-                        st.write(f"**Forecast Period:** {forecast_days} days")
-                    
-                    st.markdown("### 14-Day Forecast Chart")
-                    
-                    fig = go.Figure()
-                    
-                    fig.add_trace(go.Scatter(
-                        x=future_df['Date'],
-                        y=future_df['Predicted_Sales'],
-                        mode='lines+markers',
-                        name='14-Day Forecast',
-                        line=dict(color='#1f77b4', width=3),
-                        marker=dict(size=6, color='#1f77b4')
-                    ))
-                    
-                    fig.update_layout(
-                        title=f'Sales Forecast: {selected_product} ({model_type})',
                         xaxis_title='Date',
                         yaxis_title='Predicted Units',
                         height=400,
