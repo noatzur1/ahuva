@@ -216,11 +216,9 @@ def prepare_forecast_data_enhanced(df):
 def calculate_cv(series):
     """Calculate coefficient of variation"""
     mean_val = series.mean()
-    std_val = series.std()
-    if mean_val == 0 or pd.isna(mean_val) or pd.isna(std_val):
+    if mean_val == 0:
         return 0
-    cv = std_val / mean_val
-    return abs(cv)  # Return absolute value to handle negative means
+    return series.std() / mean_val
 
 def build_random_forest_model(df_forecast):
     """Build Random Forest model for high variability products"""
@@ -708,81 +706,140 @@ elif page == "Forecasting":
                     cv = calculate_cv(product_sales)
                     
                     if use_ml_model and 'model' in locals():
-                        # Advanced ML Forecasting
+                        # Advanced ML Forecasting - same as original code structure
                         st.markdown("### Advanced ML Forecast Results")
                         
-                        # Create future dates
-                        last_date = df['Date'].max()
-                        future_dates = []
-                        for i in range(1, forecast_days + 1):
-                            future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
+                        # Calculate CV to determine which model to use internally
+                        product_sales = product_data['UnitsSold']
+                        cv = calculate_cv(product_sales)
                         
-                        # Prepare future data for ML model
-                        future_data = []
-                        for date in future_dates:
-                            row = {
-                                'Date': date,
-                                'Product': selected_product,
-                                'Month': date.month,
-                                'DayOfWeek': date.dayofweek,
-                                'WeekOfYear': date.isocalendar().week,
-                                'Quarter': date.quarter,
-                                'DayOfMonth': date.day,
-                                'IsWeekend': 1 if date.dayofweek >= 5 else 0,
-                                'IsMonthStart': 1 if date.day == 1 else 0,
-                                'IsMonthEnd': 1 if date.is_month_end else 0,
-                                'Product_encoded': pd.Categorical([selected_product], categories=df['Product'].unique()).codes[0],
-                                'Category_encoded': pd.Categorical([product_info['Category']], categories=df['Category'].unique()).codes[0],
-                                'Stock': product_info['Stock'],
-                                'Sales_MA_3': product_data['UnitsSold'].tail(3).mean(),
-                                'Sales_MA_7': product_data['UnitsSold'].tail(7).mean(),
-                                'Sales_MA_14': product_data['UnitsSold'].tail(14).mean(),
-                                'Sales_MA_30': product_data['UnitsSold'].tail(30).mean(),
-                                'Sales_Trend_7': 0,
-                                'Stock_Sales_Ratio': product_info['Stock'] / (product_data['UnitsSold'].tail(7).mean() + 1),
-                                'Product_vs_Category_Performance': 1.0
-                            }
-                            future_data.append(row)
-                        
-                        future_df = pd.DataFrame(future_data)
-                        
-                        # Generate ML predictions
-                        X_future = future_df[features].fillna(0)
-                        predictions = model.predict(X_future)
-                        predictions = np.maximum(predictions, 0)
-                        
-                        # Add predictions to dataframe
-                        future_df['Predicted_Sales'] = predictions
-                        
-                        # Check if predictions are too flat and enhance if needed
-                        variation = predictions.max() - predictions.min()
-                        if variation < 2:
-                            # Use historical day-of-week patterns to enhance
-                            ml_average = predictions.mean()
-                            historical_by_day = product_data.groupby(product_data['Date'].dt.dayofweek)['UnitsSold'].mean()
-                            overall_avg = product_data['UnitsSold'].mean()
-                            
-                            enhanced_predictions = []
-                            for i, pred in enumerate(predictions):
-                                date = future_df.iloc[i]['Date']
-                                day_of_week = date.dayofweek
+                        if cv <= 0.5:
+                            # Use Exponential Smoothing for low variability
+                            try:
+                                es_model, mae, rmse, r2 = build_exponential_smoothing_model(product_data)
                                 
-                                if day_of_week in historical_by_day.index:
-                                    day_multiplier = historical_by_day[day_of_week] / overall_avg
-                                    enhanced_pred = ml_average * day_multiplier
-                                else:
-                                    enhanced_pred = pred
+                                # Generate forecast
+                                forecast = es_model.forecast(steps=forecast_days)
+                                forecast = np.maximum(forecast, 0)
                                 
-                                # Add small random variation
-                                import random
-                                enhanced_pred *= (0.95 + random.random() * 0.1)
-                                enhanced_predictions.append(max(0, enhanced_pred))
+                                # Create future dates
+                                last_date = product_data['Date'].max()
+                                future_dates = []
+                                for i in range(1, forecast_days + 1):
+                                    future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
+                                
+                                future_df = pd.DataFrame({
+                                    'Date': future_dates,
+                                    'Predicted_Sales': forecast
+                                })
+                                
+                                # Display model performance
+                                col1, col2, col3, col4 = st.columns(4)
+                                with col1:
+                                    st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
+                                with col2:
+                                    st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
+                                with col3:
+                                    st.metric("R² Score", f"{r2:.3f}", help="Explained Variance (closer to 1 = better)")
+                                with col4:
+                                    avg_sales = product_data['UnitsSold'].mean()
+                                    accuracy_pct = max(0, (1 - mae/avg_sales) * 100) if avg_sales > 0 else 0
+                                    st.metric("Accuracy", f"{accuracy_pct:.1f}%", help="Prediction Accuracy")
+                                
+                                st.info(f"Using Exponential Smoothing (CV = {cv:.3f} ≤ 0.5)")
+                                
+                            except Exception as e:
+                                st.error(f"Exponential Smoothing failed: {str(e)}")
+                                st.stop()
+                        else:
+                            # Use Random Forest for high variability - same as original ML code
+                            # Create future dates
+                            last_date = df['Date'].max()
+                            future_dates = []
+                            for i in range(1, forecast_days + 1):
+                                future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
                             
-                            future_df['Predicted_Sales'] = enhanced_predictions
-                            st.info("Enhanced predictions with historical day-of-week patterns")
-
+                            # Prepare future data for ML model
+                            future_data = []
+                            for date in future_dates:
+                                row = {
+                                    'Date': date,
+                                    'Product': selected_product,
+                                    'Month': date.month,
+                                    'DayOfWeek': date.dayofweek,
+                                    'WeekOfYear': date.isocalendar().week,
+                                    'Quarter': date.quarter,
+                                    'DayOfMonth': date.day,
+                                    'IsWeekend': 1 if date.dayofweek >= 5 else 0,
+                                    'IsMonthStart': 1 if date.day == 1 else 0,
+                                    'IsMonthEnd': 1 if date.is_month_end else 0,
+                                    'Product_encoded': pd.Categorical([selected_product], categories=df['Product'].unique()).codes[0],
+                                    'Category_encoded': pd.Categorical([product_info['Category']], categories=df['Category'].unique()).codes[0],
+                                    'Stock': product_info['Stock'],
+                                    'Sales_MA_3': product_data['UnitsSold'].tail(3).mean(),
+                                    'Sales_MA_7': product_data['UnitsSold'].tail(7).mean(),
+                                    'Sales_MA_14': product_data['UnitsSold'].tail(14).mean(),
+                                    'Sales_MA_30': product_data['UnitsSold'].tail(30).mean(),
+                                    'Sales_Trend_7': 0,
+                                    'Stock_Sales_Ratio': product_info['Stock'] / (product_data['UnitsSold'].tail(7).mean() + 1),
+                                    'Product_vs_Category_Performance': 1.0
+                                }
+                                future_data.append(row)
+                            
+                            future_df = pd.DataFrame(future_data)
+                            
+                            # Generate ML predictions
+                            X_future = future_df[features].fillna(0)
+                            predictions = model.predict(X_future)
+                            predictions = np.maximum(predictions, 0)
+                            
+                            # Add predictions to dataframe
+                            future_df['Predicted_Sales'] = predictions
+                            
+                            # Check if predictions are too flat and enhance if needed
+                            variation = predictions.max() - predictions.min()
+                            if variation < 2:
+                                # Use historical day-of-week patterns to enhance
+                                ml_average = predictions.mean()
+                                historical_by_day = product_data.groupby(product_data['Date'].dt.dayofweek)['UnitsSold'].mean()
+                                overall_avg = product_data['UnitsSold'].mean()
+                                
+                                enhanced_predictions = []
+                                for i, pred in enumerate(predictions):
+                                    date = future_df.iloc[i]['Date']
+                                    day_of_week = date.dayofweek
+                                    
+                                    if day_of_week in historical_by_day.index:
+                                        day_multiplier = historical_by_day[day_of_week] / overall_avg
+                                        enhanced_pred = ml_average * day_multiplier
+                                    else:
+                                        enhanced_pred = pred
+                                    
+                                    # Add small random variation
+                                    import random
+                                    enhanced_pred *= (0.95 + random.random() * 0.1)
+                                    enhanced_predictions.append(max(0, enhanced_pred))
+                                
+                                future_df['Predicted_Sales'] = enhanced_predictions
+                                st.info("Enhanced predictions with historical day-of-week patterns")
+                            
+                            # Display enhanced model performance - same as original
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
+                            with col2:
+                                st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
+                            with col3:
+                                st.metric("R² Score", f"{r2:.3f}", help="Explained Variance (closer to 1 = better)")
+                            with col4:
+                                avg_sales = df['UnitsSold'].mean()
+                                accuracy_pct = max(0, (1 - mae/avg_sales) * 100)
+                                st.metric("Accuracy", f"{accuracy_pct:.1f}%", help="Prediction Accuracy")
+                            
+                            st.info(f"Using Random Forest (CV = {cv:.3f} > 0.5)")
+                    
                     else:
-                        # Statistical Backup Forecasting
+                        # Statistical Backup Forecasting - but since we removed it, show error
                         st.markdown("### Statistical Forecast Results")
                         st.error("Statistical backup method has been disabled. Please use Advanced ML method.")
                         st.stop()
