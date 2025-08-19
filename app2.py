@@ -472,84 +472,128 @@ def build_random_forest_model(df_forecast):
 
     return model, available_features, mae, rmse, mape
 
+
 def build_exponential_smoothing_model(df_product):
-    """Build Exponential Smoothing model for low variability products"""
+    """
+    Exponential Smoothing with validation-based model selection.
+    Returns: best_model, mae, rmse, mape (metrics computed on fitted for display;
+    selection is done on a validation window to avoid overfitting).
+    """
     if len(df_product) < 10:
         raise ValueError("Need at least 10 records for Exponential Smoothing")
 
-    df_product = df_product.sort_values('Date')
-    df_product = df_product.set_index('Date')
+    # ---- Prep: daily series, trimmed to first/last non-zero to avoid long zero tails ----
+    s = (df_product.sort_values('Date')
+                      .set_index('Date')['UnitsSold']
+                      .resample('D').sum()
+                      .fillna(0.0))
 
-    sales_series = df_product['UnitsSold'].resample('D').sum()
-    sales_series = sales_series.fillna(0)
+    # trim non-zero window if exists
+    nz = s > 0
+    if nz.any():
+        s = s.loc[nz.idxmax():nz[::-1].idxmax()]
 
-    non_zero_mask = sales_series > 0
-    if non_zero_mask.any():
-        first_sale = sales_series[non_zero_mask].index[0]
-        last_sale = sales_series[non_zero_mask].index[-1]
-        sales_series = sales_series[first_sale:last_sale]
-
-    if len(sales_series) < 7:
+    if len(s) < 7:
         raise ValueError("Insufficient data after cleaning - need at least 7 days")
 
-    configs = [
-        {'trend': None, 'seasonal': None},
-        {'trend': 'add', 'seasonal': None},
-        {'trend': 'add', 'seasonal': None, 'damped_trend': True},
-    ]
+    # light winsorization to stabilize spikes
+    if len(s) > 30:
+        import numpy as _np
+        q99 = _np.quantile(s, 0.99)
+        s = _np.minimum(s, q99)
 
-    if len(sales_series) >= 21:
-        configs.extend([
-            {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 7},
-            {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': True},
-        ])
+    # ---- Train/Validation split (rolling-style single cut) ----
+    val_h = max(7, min(14, len(s) // 5))  # 7–14 days depending on history
+    train, valid = s.iloc[:-val_h], s.iloc[-val_h:]
 
-    best_model = None
-    best_mae = float('inf')
+    # ---- Candidate configurations ----
+    configs = []
+    base_trends = [None, 'add']
+    damp_opts = [False, True]
+    has_weekly = len(train) >= 21  # allow seasonality if enough history
 
-    for config in configs:
+    for tr in base_trends:
+        for dm in damp_opts:
+            configs.append({'trend': tr, 'seasonal': None, 'seasonal_periods': None, 'damped_trend': dm})
+            if has_weekly:
+                configs.append({'trend': tr, 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': dm})
+
+    use_bc = bool((train > 0).all())  # Box-Cox only if strictly positive
+
+    best = None
+    best_score = float("inf")
+
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+    for cfg in configs:
         try:
-            if config.get('seasonal'):
-                model = ExponentialSmoothing(
-                    sales_series,
-                    trend=config.get('trend'),
-                    seasonal=config.get('seasonal'),
-                    seasonal_periods=config.get('seasonal_periods', 7),
-                    damped_trend=config.get('damped_trend', False)
-                ).fit(optimized=True, use_brute=True)
-            else:
-                model = ExponentialSmoothing(
-                    sales_series,
-                    trend=config.get('trend'),
-                    damped_trend=config.get('damped_trend', False)
-                ).fit(optimized=True, use_brute=True)
+            model = ExponentialSmoothing(
+                train,
+                trend=cfg['trend'],
+                seasonal=cfg['seasonal'],
+                seasonal_periods=cfg['seasonal_periods'],
+                damped_trend=cfg['damped_trend'],
+                initialization_method="estimated"
+            ).fit(
+                optimized=True,
+                use_brute=True,
+                use_boxcox=use_bc,
+                remove_bias=True
+            )
 
-            fitted_values = model.fittedvalues
-            fitted_values = np.maximum(fitted_values, 0)
+            fc = model.forecast(val_h)
+            import numpy as _np
+            fc = _np.maximum(fc, 0.0)
 
-            mae = mean_absolute_error(sales_series, fitted_values)
+            mae = mean_absolute_error(valid, fc)
+            rmse = (mean_squared_error(valid, fc)) ** 0.5
+            mape = calculate_mape(valid.values, fc.values)
 
-            if mae < best_mae:
-                best_mae = mae
-                best_model = model
-
+            score = rmse  # selection criterion
+            if score < best_score:
+                best_score = score
+                best = {'cfg': cfg, 'model': model, 'val_metrics': (mae, rmse, mape)}
         except Exception:
             continue
 
-    if best_model is None:
-        try:
-            best_model = ExponentialSmoothing(sales_series).fit(optimized=True)
-            fitted_values = np.maximum(best_model.fittedvalues, 0)
-            best_mae = mean_absolute_error(sales_series, fitted_values)
-        except:
-            raise ValueError("Failed to build any Exponential Smoothing model")
+    if best is None:
+        # fallback to SES
+        model = ExponentialSmoothing(train, initialization_method="estimated").fit(
+            optimized=True, remove_bias=True
+        )
+        fc = model.forecast(val_h)
+        import numpy as _np
+        fc = _np.maximum(fc, 0.0)
+        mae = mean_absolute_error(valid, fc)
+        rmse = (mean_squared_error(valid, fc)) ** 0.5
+        mape = calculate_mape(valid.values, fc.values)
+        best = {'cfg': {'trend': None, 'seasonal': None, 'damped_trend': False},
+                'model': model, 'val_metrics': (mae, rmse, mape)}
 
-    fitted_values = np.maximum(best_model.fittedvalues, 0)
-    mae = mean_absolute_error(sales_series, fitted_values)
-    rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-    mape = calculate_mape(sales_series, fitted_values)
+    # ---- Refit on full series with chosen config ----
+    cfg = best['cfg']
+    final_model = ExponentialSmoothing(
+        s,
+        trend=cfg.get('trend'),
+        seasonal=cfg.get('seasonal'),
+        seasonal_periods=cfg.get('seasonal_periods'),
+        damped_trend=cfg.get('damped_trend', False),
+        initialization_method="estimated"
+    ).fit(
+        optimized=True,
+        use_brute=True,
+        use_boxcox=use_bc and (s > 0).all(),
+        remove_bias=True
+    )
 
-    return best_model, mae, rmse, mape
+    # metrics for display on fitted (choice already based on validation window)
+    fitted = __import__("numpy").maximum(final_model.fittedvalues, 0.0)
+    mae_full = mean_absolute_error(s, fitted)
+    rmse_full = (mean_squared_error(s, fitted)) ** 0.5
+    mape_full = calculate_mape(s.values, fitted.values)
+
+    return final_model, mae_full, rmse_full, mape_full
 
 # ========== Navigation ==========
 st.sidebar.markdown("<h2 class='sidebar-title'>System Navigation</h2>", unsafe_allow_html=True)
