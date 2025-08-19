@@ -705,7 +705,9 @@ if page == "HOME":
 
 # ========== ANALYSIS PAGE ==========
 elif page == "Analysis":
+       ...
     # Time-based analysis
+    if 'Date' in df.columns and not df['Date'].isna().all():
         st.markdown("---")
         st.subheader("Sales Trends Over Time")
 
@@ -726,6 +728,7 @@ elif page == "Analysis":
                               line=dict(dash='dash'))
         fig_trend.update_layout(showlegend=True)
         fig_trend.update_traces(line_color='#1f77b4', line_width=3)
+        ...
     st.markdown("<h1>Sales & Demand Analysis</h1><hr>", unsafe_allow_html=True)
 
     if st.session_state.df_clean is not None:
