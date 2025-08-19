@@ -606,13 +606,6 @@ if page == "Home":
     <hr>
     """, unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="upload-area">
-        <h3 style="color: #667eea; margin-bottom: 1rem;">Data File Upload</h3>
-        <p style="color: #6c757d;">Upload your data file to begin comprehensive analysis</p>
-    </div>
-    """, unsafe_allow_html=True)
-
     uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls", "csv"], help="Upload your Ahva sales data file")
 
     if uploaded_file is not None:
