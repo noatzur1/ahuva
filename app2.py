@@ -1197,7 +1197,96 @@ elif page == "Sales Forecasting":
 
                     else:
                         # Stock is sufficient
-                        days_stock_will_last = current_stock / avgimport streamlit as st
+                        days_stock_will_last = current_stock / avg_per_day
+                        st.success(f"""
+                        **STOCK STATUS: GOOD**
+                        - Current stock will last: **{days_stock_will_last:.1f} days**
+                        - After 14 days you'll have: **{remaining_after_14_days:.0f} units**
+                        - **NO IMMEDIATE ORDER NEEDED**
+                        - Next review recommended: **In 1 week**
+                        """)
+
+                    # Additional insights
+                    st.markdown("---")
+                    st.markdown("### Business Summary")
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Quick Status Check:**")
+                        days_stock_will_last = current_stock / avg_per_day if avg_per_day > 0 else 0
+
+                        if days_stock_will_last >= 21:
+                            st.success(f"**{days_stock_will_last:.0f} days of stock** - You're well covered")
+                        elif days_stock_will_last >= 14:
+                            st.info(f"**{days_stock_will_last:.0f} days of stock** - Good for now")
+                        elif days_stock_will_last >= 7:
+                            st.warning(f"**{days_stock_will_last:.0f} days of stock** - Plan to reorder soon")
+                        else:
+                            st.error(f"**{days_stock_will_last:.0f} days of stock** - Order immediately!")
+
+                    with col2:
+                        st.markdown("**Sales Value:**")
+                        st.write("Add price information to enable revenue calculations")
+
+                    # FORECAST CHART ONLY
+                    st.markdown("### 14-Day Forecast Chart")
+
+                    fig = go.Figure()
+
+                    # ONLY forecast data
+                    fig.add_trace(go.Scatter(
+                        x=future_df['Date'],
+                        y=future_df['Predicted_Sales'],
+                        mode='lines+markers',
+                        name='14-Day Forecast',
+                        line=dict(color='#1f77b4', width=3),
+                        marker=dict(size=6, color='#1f77b4')
+                    ))
+
+                    # Clean layout
+                    fig.update_layout(
+                        title=f'Sales Forecast: {selected_product}',
+                        xaxis_title='Date',
+                        yaxis_title='Predicted Units',
+                        height=400,
+                        showlegend=False
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"Error generating forecast: {str(e)}")
+                    st.write("**Debug Info:**")
+                    st.write(f"- Product: {selected_product}")
+                    st.write(f"- Data points: {len(product_data)}")
+                    st.write(f"- Date range: {product_data['Date'].min()} to {product_data['Date'].max()}")
+
+    else:
+        st.warning("Please upload and clean your data on the Dashboard page first.")
+
+# ========== Sidebar ==========
+st.sidebar.markdown("---")
+st.sidebar.subheader("Data Tools")
+
+if st.session_state.df_clean is not None:
+    if st.sidebar.button("Export Data"):
+        csv = st.session_state.df_clean.to_csv(index=False)
+        st.sidebar.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=f"ahva_data_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Ahva Analytics Platform v3.0**")
+st.sidebar.markdown("*Advanced Analytics System*")
+st.sidebar.markdown("Built with Streamlit & scikit-learn")
+
+if st.session_state.df_clean is not None:
+    st.sidebar.success("Enhanced Dashboard Ready!")
+    st.sidebar.info("ML Forecasting Active")import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
