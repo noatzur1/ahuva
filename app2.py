@@ -236,7 +236,7 @@ st.markdown(r'''
             font-size: 2rem;
         }
     }
-''', unsafe_allow_html=True)
+    ''', unsafe_allow_html=True)
 
 
 # ========== Column Mapping ==========
