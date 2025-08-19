@@ -233,6 +233,8 @@ def calculate_mape(y_true, y_pred):
 
 def classify_products_by_cv(df):
     """Classify products by coefficient of variation"""
+    st.write("Calculating coefficient of variation (CV) for each SKU...")
+    
     product_stats = df.groupby('SKU')['UnitsSold'].agg(['mean', 'std', 'count']).reset_index()
     product_stats['cv'] = product_stats['std'] / (product_stats['mean'] + 1e-8)
     product_stats = product_stats[product_stats['count'] >= 10].reset_index(drop=True)
@@ -240,7 +242,11 @@ def classify_products_by_cv(df):
     if len(product_stats) == 0:
         return df
     
+    st.write(f"Products with sufficient data: {len(product_stats)} out of {df['SKU'].nunique()}")
+    
     cv_threshold = product_stats['cv'].median()
+    st.write(f"CV threshold selected: {cv_threshold:.3f} (median)")
+    
     product_stats['demand_group'] = product_stats['cv'].apply(
         lambda x: 'stable' if x <= cv_threshold else 'volatile'
     )
@@ -249,11 +255,29 @@ def classify_products_by_cv(df):
     stable_count = (product_stats['demand_group'] == 'stable').sum()
     volatile_count = (product_stats['demand_group'] == 'volatile').sum()
     
-    st.info(f"CV threshold selected: {cv_threshold:.3f} (median)")
-    st.info(f"Product classification: stable demand: {stable_count} products ({stable_count/len(product_stats)*100:.1f}%), volatile demand: {volatile_count} products ({volatile_count/len(product_stats)*100:.1f}%)")
+    st.write("Product classification:")
+    st.write(f"stable demand: {stable_count} products ({stable_count/len(product_stats)*100:.1f}%)")
+    st.write(f"volatile demand: {volatile_count} products ({volatile_count/len(product_stats)*100:.1f}%)")
+    
+    # Statistics by group
+    st.write("\nStatistics by demand group:")
+    for group in ['stable', 'volatile']:
+        group_data = product_stats[product_stats['demand_group'] == group]
+        if len(group_data) > 0:
+            st.write(f"\n{group} demand:")
+            st.write(f"  Average CV: {group_data['cv'].mean():.3f}")
+            st.write(f"  Average sales: {group_data['mean'].mean():.2f}")
+            st.write(f"  CV range: {group_data['cv'].min():.3f} - {group_data['cv'].max():.3f}")
     
     # Add classification to main dataset
     df = df.merge(product_stats[['SKU', 'demand_group']], on='SKU', how='left')
+    
+    # Final classification distribution
+    final_split = df['demand_group'].value_counts()
+    st.write("\nFinal data distribution:")
+    for group, count in final_split.items():
+        st.write(f"{group} demand: {count} records")
+    
     return df
 
 def build_random_forest_model(df_forecast):
