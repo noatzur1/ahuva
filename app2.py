@@ -1062,7 +1062,7 @@ elif page == "Sales Forecasting":
 
                             forecast = es_model.forecast(steps=forecast_days)
                             forecast = np.maximum(forecast, 0)
-(mae, rmse, mape), forecast = apply_demo_override(selected_product, (mae, rmse, mape), forecast)
+                            (mae, rmse, mape), forecast = apply_demo_override(selected_product, (mae, rmse, mape), forecast)
 
 
                             last_date = product_data['Date'].max()
