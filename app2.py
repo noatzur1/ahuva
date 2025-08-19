@@ -22,8 +22,7 @@ st.set_page_config(
     page_icon="📊"
 )
 
-# ========== CSS Styling ==========
-st.markdown("""
+# ========== CSS Styling ==st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
@@ -239,6 +238,8 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+l=True)
 
 # ========== Column Mapping ==========
 COLUMN_MAPPING = {
@@ -587,7 +588,7 @@ def build_exponential_smoothing_model(df_product):
         return model, mae, rmse, mape
 
 # ========== Navigation ==========
-st.sidebar.markdown("<h2 class='sidebar-title'>System Navigation</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 class='sidebar-title'>Navigation</h2>", unsafe_allow_html=True)
 page = st.sidebar.radio("Go to:", ["HOME", "Analysis", "Seasonality", "Forecasting"])
 
 # ========== Session State ==========
