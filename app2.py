@@ -216,9 +216,11 @@ def prepare_forecast_data_enhanced(df):
 def calculate_cv(series):
     """Calculate coefficient of variation"""
     mean_val = series.mean()
-    if mean_val == 0:
+    std_val = series.std()
+    if mean_val == 0 or pd.isna(mean_val) or pd.isna(std_val):
         return 0
-    return series.std() / mean_val
+    cv = std_val / mean_val
+    return abs(cv)  # Return absolute value to handle negative means
 
 def build_random_forest_model(df_forecast):
     """Build Random Forest model for high variability products"""
@@ -706,15 +708,20 @@ elif page == "Forecasting":
                     cv = calculate_cv(product_sales)
                     
                     if use_ml_model and 'model' in locals():
-                        # Advanced ML Forecasting - same as original code structure
+                        # Advanced ML Forecasting
                         st.markdown("### Advanced ML Forecast Results")
                         
-                        # Calculate CV to determine which model to use internally
+                        # Calculate CV to determine which model to use
                         product_sales = product_data['UnitsSold']
                         cv = calculate_cv(product_sales)
                         
+                        # Debug: Show CV calculation details
+                        st.write(f"**Debug Info:** Product: {selected_product}, CV: {cv:.4f}, Mean: {product_sales.mean():.2f}, Std: {product_sales.std():.2f}")
+                        
                         if cv <= 0.5:
                             # Use Exponential Smoothing for low variability
+                            st.info(f"Using Exponential Smoothing (CV = {cv:.3f} ≤ 0.5)")
+                            
                             try:
                                 es_model, mae, rmse, r2 = build_exponential_smoothing_model(product_data)
                                 
@@ -733,26 +740,13 @@ elif page == "Forecasting":
                                     'Predicted_Sales': forecast
                                 })
                                 
-                                # Display model performance
-                                col1, col2, col3, col4 = st.columns(4)
-                                with col1:
-                                    st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
-                                with col2:
-                                    st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
-                                with col3:
-                                    st.metric("R² Score", f"{r2:.3f}", help="Explained Variance (closer to 1 = better)")
-                                with col4:
-                                    avg_sales = product_data['UnitsSold'].mean()
-                                    accuracy_pct = max(0, (1 - mae/avg_sales) * 100) if avg_sales > 0 else 0
-                                    st.metric("Accuracy", f"{accuracy_pct:.1f}%", help="Prediction Accuracy")
-                                
-                                st.info(f"Using Exponential Smoothing (CV = {cv:.3f} ≤ 0.5)")
-                                
                             except Exception as e:
                                 st.error(f"Exponential Smoothing failed: {str(e)}")
                                 st.stop()
                         else:
-                            # Use Random Forest for high variability - same as original ML code
+                            # Use Random Forest for high variability
+                            st.info(f"Using Random Forest (CV = {cv:.3f} > 0.5)")
+                            
                             # Create future dates
                             last_date = df['Date'].max()
                             future_dates = []
@@ -822,24 +816,22 @@ elif page == "Forecasting":
                                 
                                 future_df['Predicted_Sales'] = enhanced_predictions
                                 st.info("Enhanced predictions with historical day-of-week patterns")
-                            
-                            # Display enhanced model performance - same as original
-                            col1, col2, col3, col4 = st.columns(4)
-                            with col1:
-                                st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
-                            with col2:
-                                st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
-                            with col3:
-                                st.metric("R² Score", f"{r2:.3f}", help="Explained Variance (closer to 1 = better)")
-                            with col4:
-                                avg_sales = df['UnitsSold'].mean()
-                                accuracy_pct = max(0, (1 - mae/avg_sales) * 100)
-                                st.metric("Accuracy", f"{accuracy_pct:.1f}%", help="Prediction Accuracy")
-                            
-                            st.info(f"Using Random Forest (CV = {cv:.3f} > 0.5)")
-                    
+                        
+                        # Display model performance
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
+                        with col2:
+                            st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
+                        with col3:
+                            st.metric("R² Score", f"{r2:.3f}", help="Explained Variance (closer to 1 = better)")
+                        with col4:
+                            avg_sales = df['UnitsSold'].mean()
+                            accuracy_pct = max(0, (1 - mae/avg_sales) * 100)
+                            st.metric("Accuracy", f"{accuracy_pct:.1f}%", help="Prediction Accuracy")
+
                     else:
-                        # Statistical Backup Forecasting - but since we removed it, show error
+                        # Statistical Backup Forecasting
                         st.markdown("### Statistical Forecast Results")
                         st.error("Statistical backup method has been disabled. Please use Advanced ML method.")
                         st.stop()
