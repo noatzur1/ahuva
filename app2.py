@@ -706,7 +706,6 @@ if page == "HOME":
 # ========== ANALYSIS PAGE ==========
 elif page == "Analysis":
     # Time-based analysis
-    if 'Date' in df.columns and not df['Date'].isna().all():
         st.markdown("---")
         st.subheader("Sales Trends Over Time")
 
