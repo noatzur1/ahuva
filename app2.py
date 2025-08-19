@@ -925,14 +925,39 @@ elif page == "Forecasting":
                             future_df['Predicted_Sales'] = enhanced_predictions
                             st.info("Enhanced predictions with historical day-of-week patterns")
 
-                        # Display model performance
+                        # Calculate product-specific model performance
+                        product_forecast_data = df_forecast[df_forecast['Product'] == selected_product]
+                        if len(product_forecast_data) > 5:
+                            # Split product data for validation
+                            test_size = min(0.3, max(0.2, len(product_forecast_data) // 5))
+                            if len(product_forecast_data) > 10:
+                                train_data = product_forecast_data.iloc[:-int(len(product_forecast_data)*test_size)]
+                                test_data = product_forecast_data.iloc[-int(len(product_forecast_data)*test_size):]
+                                
+                                # Predict on test data
+                                X_test_product = test_data[features].fillna(0)
+                                y_test_product = test_data['UnitsSold']
+                                y_pred_product = model.predict(X_test_product)
+                                
+                                # Calculate product-specific metrics
+                                product_mae = mean_absolute_error(y_test_product, y_pred_product)
+                                product_rmse = np.sqrt(mean_squared_error(y_test_product, y_pred_product))
+                                product_mape = calculate_mape(y_test_product, y_pred_product)
+                            else:
+                                # Use global metrics if insufficient data
+                                product_mae, product_rmse, product_mape = mae, rmse, mape
+                        else:
+                            # Use global metrics if insufficient data
+                            product_mae, product_rmse, product_mape = mae, rmse, mape
+
+                        # Display product-specific model performance
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
+                            st.metric("MAE", f"{product_mae:.2f}", help="Mean Absolute Error for this product")
                         with col2:
-                            st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
+                            st.metric("RMSE", f"{product_rmse:.2f}", help="Root Mean Square Error for this product")
                         with col3:
-                            st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
+                            st.metric("MAPE", f"{product_mape:.1f}%", help="Mean Absolute Percentage Error for this product")
 
                     # Display results
                     st.markdown("### 14-Day Forecast Analysis")
