@@ -19,7 +19,7 @@ st.set_page_config(
     page_title="Ahva Analytics Platform",
     layout="wide",
     initial_sidebar_state="expanded",
-    page_icon="📊"
+    
 )
 
 # ========== CSS Styling ==
@@ -599,11 +599,18 @@ if "df_clean" not in st.session_state:
     st.session_state.df_clean = None
 
 # ========== HOME PAGE ==========
-if page == "HOME":
+if page == "Home":
     st.markdown("""
-    <h1 style='margin-bottom: 10px; text-align: center;'>📦 Ahva Inventory Dashboard</h1>
-    <p style='text-align: center; font-size: 18px; color: #666;'>Advanced Analytics & Sales Forecasting Platform</p>
+    <h1>Ahva Advanced Analytics Platform</h1>
+    <p class='page-subtitle'>Professional Data Analysis & Sales Forecasting System</p>
     <hr>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="upload-area">
+        <h3 style="color: #667eea; margin-bottom: 1rem;">Data File Upload</h3>
+        <p style="color: #6c757d;">Upload your data file to begin comprehensive analysis</p>
+    </div>
     """, unsafe_allow_html=True)
 
     uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls", "csv"], help="Upload your Ahva sales data file")
