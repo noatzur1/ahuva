@@ -1,21 +1,856 @@
-try:
-                        # Fixed 14-day forecast period
-                        forecast_days = 14
+model = ExponentialSmoothing(
+                    sales_series,
+                    trend=config.get('trend'),
+                    seasonal=config.get('seasonal'),
+                    seasonal_periods=config.get('seasonal_periods', 7),
+                    damped_trend=config.get('damped_trend', False)
+                ).fit(optimized=True, use_brute=True)
+            else:
+                model = ExponentialSmoothing(
+                    sales_series,
+                    trend=config.get('trend'),
+                    damped_trend=config.get('damped_trend', False)
+                ).fit(optimized=True, use_brute=True)
 
-                        # Product data validation
-                        product_data = df[df['Product'] == selected_product]
-                        if len(product_data) < 5:
+            # Calculate error
+            fitted_values = model.fittedvalues
+            fitted_values = np.maximum(fitted_values, 0)  # No negative values
+            
+            mae = mean_absolute_error(sales_series, fitted_values)
+            
+            if mae < best_mae:
+                best_mae = mae
+                best_model = model
+                
+        except Exception as e:
+            continue  # Try next configuration
+
+    # Fallback to simple exponential smoothing if all failed
+    if best_model is None:
+        try:
+            best_model = ExponentialSmoothing(sales_series).fit(optimized=True)
+            fitted_values = np.maximum(best_model.fittedvalues, 0)
+            best_mae = mean_absolute_error(sales_series, fitted_values)
+        except:
+            raise ValueError("Failed to build any Exponential Smoothing model")
+
+    # Calculate final metrics
+    fitted_values = np.maximum(best_model.fittedvalues, 0)
+    mae = mean_absolute_error(sales_series, fitted_values)
+    rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
+    mape = calculate_mape(sales_series, fitted_values)
+
+    return best_model, mae, rmse, mape
+
+# ========== Navigation ==========
+st.sidebar.markdown("<h2 class='sidebar-title'>System Navigation</h2>", unsafe_allow_html=True)
+page = st.sidebar.radio("Go to:", ["Dashboard", "Sales Analysis", "Seasonality Analysis", "Sales Forecasting"])
+
+# ========== Session State ==========
+if "df" not in st.session_state:
+    st.session_state.df = None
+if "df_clean" not in st.session_state:
+    st.session_state.df_clean = None
+
+# ========== DASHBOARD PAGE ==========
+if page == "Dashboard":
+    st.markdown("""
+    <h1>Ahva Advanced Analytics Platform</h1>
+    <p class='page-subtitle'>Professional Data Analysis & Sales Forecasting System</p>
+    <hr>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="upload-area">
+        <h3 style="color: #667eea; margin-bottom: 1rem;">Data File Upload</h3>
+        <p style="color: #6c757d;">Upload your data file to begin comprehensive analysis</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    uploaded_file = st.file_uploader("Select Excel or CSV file", type=["xlsx", "xls", "csv"], help="Upload your sales data file")
+
+    if uploaded_file is not None:
+        try:
+            with st.spinner("Loading and analyzing your data..."):
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                st.session_state.df = df
+                df_clean = clean_data(df)
+                # Classify products by CV
+                df_clean = classify_products_by_cv(df_clean)
+                st.session_state.df_clean = df_clean
+
+            st.markdown("""
+            <div class="alert-box alert-success">
+                <strong>File uploaded and processed successfully!</strong><br>
+                System ready for advanced data analysis
+            </div>
+            """, unsafe_allow_html=True)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Raw Data Overview:**")
+                st.write(f"- Original rows: {len(df):,}")
+                st.write(f"- Columns: {len(df.columns)}")
+                st.write(f"- File size: {uploaded_file.size / 1024:.1f} KB")
+
+            with col2:
+                st.markdown("**Processed Data Overview:**")
+                st.write(f"- Processed rows: {len(df_clean):,}")
+                st.write(f"- Data quality: {(len(df_clean)/len(df)*100):.1f}%")
+                st.write(f"- Ready for analysis: ✅")
+
+            with st.expander("Data Preview", expanded=False):
+                st.dataframe(df_clean.head(10), use_container_width=True)
+
+        except Exception as e:
+            st.markdown(f"""
+            <div class="alert-box alert-danger">
+                <strong>Error loading file:</strong><br>
+                {str(e)}
+            </div>
+            """, unsafe_allow_html=True)
+
+    if st.session_state.df_clean is not None:
+        df = st.session_state.df_clean
+
+        st.markdown("<hr><div class='section-header'>Date Range Filter</div>", unsafe_allow_html=True)
+
+        if 'Date' in df.columns and not df['Date'].isna().all():
+            min_date = df['Date'].min().date()
+            max_date = df['Date'].max().date()
+
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input("Start Date", value=min_date, min_value=min_date, max_value=max_date)
+            with col2:
+                end_date = st.date_input("End Date", value=max_date, min_value=min_date, max_value=max_date)
+
+            filtered_df = df[(df['Date'] >= pd.to_datetime(start_date)) & (df['Date'] <= pd.to_datetime(end_date))]
+            if len(filtered_df) == 0:
+                filtered_df = df
+        else:
+            filtered_df = df
+
+        # KPI CALCULATIONS
+        st.markdown("<div class='section-header'>Key Performance Indicators</div>", unsafe_allow_html=True)
+
+        total_products = filtered_df['Product'].nunique() if 'Product' in filtered_df.columns else 0
+        total_stock = int(filtered_df['Stock'].sum()) if 'Stock' in filtered_df.columns else 0
+        total_demand = int(filtered_df['UnitsSold'].sum()) if 'UnitsSold' in filtered_df.columns else 0
+
+        if 'UnitsSold' in filtered_df.columns and 'Stock' in filtered_df.columns:
+            shortages = (filtered_df['UnitsSold'] > filtered_df['Stock']).sum()
+            filtered_df["ShortageQty"] = (filtered_df["UnitsSold"] - filtered_df["Stock"]).clip(lower=0)
+            missing_units = int(filtered_df["ShortageQty"].sum())
+        else:
+            shortages = 0
+            missing_units = 0
+
+        efficiency = (total_demand / total_stock) * 100 if total_stock > 0 else 0
+        shortage_rate = (missing_units / total_demand) * 100 if total_demand > 0 else 0
+
+        st.markdown(f"""
+        <div class="kpi-container">
+            <div class="kpi-card">
+                <div class="kpi-title">Total Demand</div>
+                <div class="kpi-value">{total_demand:,}</div>
+                <div class="kpi-subtext">Units Sold</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Inventory Efficiency</div>
+                <div class="kpi-value">{efficiency:.1f}%</div>
+                <div class="kpi-subtext">Demand/Stock Ratio</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Shortage Rate</div>
+                <div class="kpi-value">{shortage_rate:.1f}%</div>
+                <div class="kpi-subtext">Missing Units/Total Demand</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Active Products</div>
+                <div class="kpi-value">{total_products}</div>
+                <div class="kpi-subtext">Unique Products</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ========== SALES ANALYSIS PAGE ==========
+elif page == "Sales Analysis":
+    st.markdown("<h1>Sales & Demand Analysis</h1><hr>", unsafe_allow_html=True)
+
+    if st.session_state.df_clean is not None:
+        df = st.session_state.df_clean.copy()
+
+        if 'Category' not in df.columns or 'UnitsSold' not in df.columns:
+            st.markdown("""
+            <div class="alert-box alert-danger">
+                <strong>Error:</strong> Missing required columns: Category, UnitsSold
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            # Sales by Category with Interactive Plotly Charts
+            st.markdown("<div class='section-header'>Sales Distribution by Category</div>", unsafe_allow_html=True)
+            category_sales = df.groupby("Category")["UnitsSold"].agg(['sum', 'mean', 'count']).reset_index()
+            category_sales.columns = ['Category', 'Total_Sales', 'Avg_Sales', 'Records']
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                fig_bar = px.bar(
+                    category_sales,
+                    x="Category",
+                    y="Total_Sales",
+                    color="Total_Sales",
+                    title="Total Units Sold by Category",
+                    labels={"Total_Sales": "Total Units Sold", "Category": "Category"},
+                    color_continuous_scale="Blues",
+                    text="Total_Sales"
+                )
+                fig_bar.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
+                fig_bar.update_layout(showlegend=False, height=400)
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+            with col2:
+                fig_pie = px.pie(
+                    category_sales,
+                    values="Total_Sales",
+                    names="Category",
+                    title="Sales Distribution (%)",
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                fig_pie.update_layout(height=400)
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            st.markdown("<div class='data-table'>", unsafe_allow_html=True)
+            st.markdown("**Category Performance Summary:**")
+            category_sales['Avg_Sales'] = category_sales['Avg_Sales'].round(1)
+            st.dataframe(category_sales, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            # Time-based analysis
+            if 'Date' in df.columns and not df['Date'].isna().all():
+                st.markdown("<hr><div class='section-header'>Sales Trends Over Time</div>", unsafe_allow_html=True)
+
+                daily_sales = df.groupby('Date')['UnitsSold'].sum().reset_index()
+                fig_trend = px.line(
+                    daily_sales,
+                    x='Date',
+                    y='UnitsSold',
+                    title='Daily Sales Trend',
+                    labels={'UnitsSold': 'Units Sold', 'Date': 'Date'}
+                )
+                fig_trend.update_traces(line_color='#667eea', line_width=3)
+                fig_trend.update_layout(height=400)
+                st.plotly_chart(fig_trend, use_container_width=True)
+
+                st.markdown("<div class='section-header'>Sales Pattern Analysis</div>", unsafe_allow_html=True)
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    df['DayName'] = df['Date'].dt.day_name()
+                    daily_pattern = df.groupby('DayName')['UnitsSold'].sum().reset_index()
+
+                    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                    daily_pattern['DayName'] = pd.Categorical(daily_pattern['DayName'], categories=day_order, ordered=True)
+                    daily_pattern = daily_pattern.sort_values('DayName')
+
+                    fig_daily = px.bar(
+                        daily_pattern,
+                        x='DayName',
+                        y='UnitsSold',
+                        title="Sales by Day of Week",
+                        labels={'UnitsSold': 'Units Sold', 'DayName': 'Day of Week'},
+                        color='UnitsSold',
+                        color_continuous_scale='Blues'
+                    )
+                    fig_daily.update_layout(showlegend=False, height=400)
+                    st.plotly_chart(fig_daily, use_container_width=True)
+
+                with col2:
+                    product_velocity = df.groupby('Product')['UnitsSold'].agg(['sum', 'mean']).reset_index()
+                    product_velocity.columns = ['Product', 'Total_Sales', 'Avg_Daily_Sales']
+                    top_products = product_velocity.nlargest(10, 'Total_Sales')
+
+                    fig_products = px.bar(
+                        top_products,
+                        x='Total_Sales',
+                        y='Product',
+                        orientation='h',
+                        title='Top 10 Products by Sales',
+                        labels={'Total_Sales': 'Total Sales', 'Product': 'Product'},
+                        color='Total_Sales',
+                        color_continuous_scale='Viridis'
+                    )
+                    fig_products.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
+                    st.plotly_chart(fig_products, use_container_width=True)
+
+    else:
+        st.markdown("""
+        <div class="alert-box alert-warning">
+            <strong>Warning:</strong> Please upload a data file on the Dashboard page first
+        </div>
+        """, unsafe_allow_html=True)
+
+# ========== SEASONALITY ANALYSIS PAGE ==========
+elif page == "Seasonality Analysis":
+    st.markdown("<h1>Seasonality Analysis</h1><hr>", unsafe_allow_html=True)
+
+    if st.session_state.df_clean is not None:
+        df = st.session_state.df_clean.copy()
+
+        if 'Product' not in df.columns or 'UnitsSold' not in df.columns or 'Date' not in df.columns:
+            st.markdown("""
+            <div class="alert-box alert-danger">
+                <strong>Error:</strong> Missing required columns: Product, UnitsSold, Date
+            </div>
+            """, unsafe_allow_html=True)
+        elif df['Date'].isna().all():
+            st.markdown("""
+            <div class="alert-box alert-danger">
+                <strong>Error:</strong> Date column contains no valid dates
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            products = df['Product'].unique()
+            selected_product = st.selectbox("Select Product for Analysis:", products)
+
+            product_data = df[df['Product'] == selected_product].copy()
+
+            if len(product_data) == 0:
+                st.markdown("""
+                <div class="alert-box alert-warning">
+                    <strong>Warning:</strong> No data found for selected product
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div class='section-header'>Seasonality Analysis for {selected_product}</div>", unsafe_allow_html=True)
+
+                product_data['Month'] = product_data['Date'].dt.month
+                product_data['MonthName'] = product_data['Date'].dt.month_name()
+                monthly_sales = product_data.groupby(['Month', 'MonthName'])['UnitsSold'].sum().reset_index()
+                monthly_sales.columns = ['Month', 'MonthName', 'Total_Sales']
+
+                fig_monthly = px.line(
+                    monthly_sales,
+                    x='MonthName',
+                    y='Total_Sales',
+                    markers=True,
+                    title=f"Monthly Sales Pattern for {selected_product}",
+                    labels={'Total_Sales': 'Total Units Sold', 'MonthName': 'Month'}
+                )
+                fig_monthly.update_traces(line_color='#667eea', marker_size=10, line_width=4)
+                fig_monthly.update_layout(height=400)
+                st.plotly_chart(fig_monthly, use_container_width=True)
+
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Sales", f"{product_data['UnitsSold'].sum():,.0f}")
+                with col2:
+                    if len(monthly_sales) > 0:
+                        peak_month = monthly_sales.loc[monthly_sales['Total_Sales'].idxmax(), 'MonthName']
+                        st.metric("Peak Month", peak_month)
+                with col3:
+                    avg_monthly = monthly_sales['Total_Sales'].mean()
+                    st.metric("Monthly Average", f"{avg_monthly:.1f}")
+                with col4:
+                    if len(monthly_sales) > 0:
+                        peak_ratio = monthly_sales['Total_Sales'].max() / monthly_sales['Total_Sales'].mean()
+                        st.metric("Seasonality Index", f"{peak_ratio:.1f}x")
+
+                st.markdown("<hr><div class='section-header'>Weekly Sales Pattern</div>", unsafe_allow_html=True)
+
+                product_data['DayOfWeek'] = product_data['Date'].dt.day_name()
+                weekly_sales = product_data.groupby('DayOfWeek')['UnitsSold'].sum().reset_index()
+
+                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                weekly_sales['DayOfWeek'] = pd.Categorical(weekly_sales['DayOfWeek'], categories=day_order, ordered=True)
+                weekly_sales = weekly_sales.sort_values('DayOfWeek')
+
+                fig_weekly = px.bar(
+                    weekly_sales,
+                    x='DayOfWeek',
+                    y='UnitsSold',
+                    title=f"Weekly Sales Pattern for {selected_product}",
+                    labels={'UnitsSold': 'Units Sold', 'DayOfWeek': 'Day of Week'},
+                    color='UnitsSold',
+                    color_continuous_scale='Blues'
+                )
+                fig_weekly.update_layout(showlegend=False, height=400)
+                st.plotly_chart(fig_weekly, use_container_width=True)
+
+    else:
+        st.markdown("""
+        <div class="alert-box alert-warning">
+            <strong>Warning:</strong> Please upload a data file on the Dashboard page first
+        </div>
+        """, unsafe_allow_html=True)
+
+# ========== SALES FORECASTING PAGE ==========
+elif page == "Sales Forecasting":
+    st.markdown("<h1>Advanced Sales Forecasting</h1><hr>", unsafe_allow_html=True)
+
+    if st.session_state.df_clean is not None:
+        df = st.session_state.df_clean.copy()
+
+        st.markdown("<div class='section-header'>Advanced Machine Learning Prediction Engine</div>", unsafe_allow_html=True)
+
+        if len(df) < 15:
+            st.markdown("""
+            <div class="alert-box alert-danger">
+                <strong>Error:</strong> Insufficient data for reliable forecasting. Need at least 15 records.<br>
+                Try uploading more historical data for better predictions.
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            # Model selection
+            st.markdown("**Select Forecasting Method:**")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                model_type = st.selectbox("Choose Model:",
+                    ["Advanced ML (Recommended)", "Statistical Backup"],
+                    help="Advanced ML uses Random Forest with 20+ features. Statistical backup uses trend analysis."
+                )
+
+            with col2:
+                confidence_level = st.selectbox("Confidence Level:",
+                    ["High (±10%)", "Medium (±15%)", "Low (±20%)"],
+                    index=1,
+                    help="Higher confidence = narrower prediction bands"
+                )
+
+            # Extract confidence percentage
+            confidence_pct = {"High (±10%)": 0.10, "Medium (±15%)": 0.15, "Low (±20%)": 0.20}[confidence_level]
+
+            if model_type == "Advanced ML (Recommended)":
+                with st.spinner("Building enhanced Random Forest model with 20+ features..."):
+                    try:
+                        # Prepare enhanced data
+                        df_forecast = prepare_forecast_data_enhanced(df)
+
+                        # Build enhanced model
+                        model, features, mae, rmse, mape = build_random_forest_model(df_forecast)
+
+                        # Display enhanced model performance
+                        st.markdown("""
+                        <div class="alert-box alert-success">
+                            <strong>Enhanced Random Forest model trained successfully!</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
+                        with col2:
+                            st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
+                        with col3:
+                            st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
+
+                        # Model quality assessment
+                        if mape < 10:
+                            st.markdown("""
+                            <div class="alert-box alert-success">
+                                Excellent model quality! High confidence in predictions.
+                            </div>
+                            """, unsafe_allow_html=True)
+                        elif mape < 20:
+                            st.markdown("""
+                            <div class="alert-box alert-info">
+                                Good model quality. Reliable predictions expected.
+                            </div>
+                            """, unsafe_allow_html=True)
+                        elif mape < 30:
+                            st.markdown("""
+                            <div class="alert-box alert-warning">
+                                Moderate model quality. Use predictions with caution.
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown("""
+                            <div class="alert-box alert-danger">
+                                Poor model quality. Consider using Statistical Backup method.
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        use_ml_model = True
+
+                    except Exception as e:
+                        st.markdown(f"""
+                        <div class="alert-box alert-danger">
+                            <strong>ML model failed:</strong> {str(e)}
+                        </div>
+                        """, unsafe_allow_html=True)
+                        st.stop()
+            else:
+                st.markdown("""
+                <div class="alert-box alert-danger">
+                    Statistical backup method has been disabled. Please use Advanced ML method.
+                </div>
+                """, unsafe_allow_html=True)
+                st.stop()
+
+            # Product selection for forecasting
+            st.markdown("<hr><div class='section-header'>Generate 14-Day Forecast</div>", unsafe_allow_html=True)
+
+            selected_product = st.selectbox("Select Product:", df['Product'].unique())
+
+            if st.button("Generate 14-Day Forecast", type="primary"):
+                try:
+                    # Fixed 14-day forecast period
+                    forecast_days = 14
+
+                    # Product data validation
+                    product_data = df[df['Product'] == selected_product]
+                    if len(product_data) < 5:
+                        st.markdown(f"""
+                        <div class="alert-box alert-danger">
+                            <strong>Error:</strong> Insufficient data for {selected_product}. Need at least 5 records.
+                        </div>
+                        """, unsafe_allow_html=True)
+                        st.stop()
+
+                    product_info = product_data.iloc[-1]
+
+                    # Get CV from the classification data
+                    if 'cv' in product_data.columns and not product_data['cv'].isna().all():
+                        cv = product_data['cv'].iloc[0]
+                    else:
+                        # Fallback calculation if CV not found
+                        product_sales = product_data['UnitsSold']
+                        cv = calculate_cv(product_sales)
+
+                    # Use fixed CV threshold of 0.5 for classification
+                    if cv <= 0.5:
+                        # Use Exponential Smoothing for stable demand
+                        st.markdown("""
+                        <div class="forecast-section">
+                            <div class='section-header'>Exponential Smoothing Forecast Results</div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.markdown(f"""
+                        <div class="alert-box alert-info">
+                            Using Exponential Smoothing (CV = {cv:.3f} ≤ 0.5 - Stable Demand)
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        try:
+                            es_model, mae, rmse, mape = build_exponential_smoothing_model(product_data)
+
+                            # Generate forecast
+                            forecast = es_model.forecast(steps=forecast_days)
+                            forecast = np.maximum(forecast, 0)
+
+                            # Create future dates
+                            last_date = product_data['Date'].max()
+                            future_dates = []
+                            for i in range(1, forecast_days + 1):
+                                future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
+
+                            future_df = pd.DataFrame({
+                                'Date': future_dates,
+                                'Predicted_Sales': forecast
+                            })
+
+                            # Display model performance
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
+                            with col2:
+                                st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
+                            with col3:
+                                st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
+
+                        except Exception as e:
                             st.markdown(f"""
                             <div class="alert-box alert-danger">
-                                <strong>Error:</strong> Insufficient data for {selected_product}. Need at least 5 records.
+                                <strong>Exponential Smoothing failed:</strong> {str(e)}
                             </div>
                             """, unsafe_allow_html=True)
                             st.stop()
+                    else:
+                        # Use Random Forest for volatile demand
+                        st.markdown("""
+                        <div class="forecast-section">
+                            <div class='section-header'>Advanced ML Forecast Results</div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.markdown(f"""
+                        <div class="alert-box alert-info">
+                            Using Random Forest (CV = {cv:.3f} > 0.5 - Volatile Demand)
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                        product_info = product_data.iloc[-1]
+                        # Create future dates
+                        last_date = df['Date'].max()
+                        future_dates = []
+                        for i in range(1, forecast_days + 1):
+                            future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
 
-                        # Get CV from the predefined mapping
-                        product_sku = product_data['SKU'].iloc[0]import streamlit as st
+                        # Prepare future data for ML model
+                        future_data = []
+                        for date in future_dates:
+                            row = {
+                                'Date': date,
+                                'Product': selected_product,
+                                'Month': date.month,
+                                'DayOfWeek': date.dayofweek,
+                                'WeekOfYear': date.isocalendar().week,
+                                'Quarter': date.quarter,
+                                'DayOfMonth': date.day,
+                                'IsWeekend': 1 if date.dayofweek >= 5 else 0,
+                                'IsMonthStart': 1 if date.day == 1 else 0,
+                                'IsMonthEnd': 1 if date.is_month_end else 0,
+                                'Product_encoded': pd.Categorical([selected_product], categories=df['Product'].unique()).codes[0],
+                                'Category_encoded': pd.Categorical([product_info['Category']], categories=df['Category'].unique()).codes[0],
+                                'Stock': product_info['Stock'],
+                                'Sales_MA_3': product_data['UnitsSold'].tail(3).mean(),
+                                'Sales_MA_7': product_data['UnitsSold'].tail(7).mean(),
+                                'Sales_MA_14': product_data['UnitsSold'].tail(14).mean(),
+                                'Sales_MA_30': product_data['UnitsSold'].tail(30).mean(),
+                                'Sales_Trend_7': 0,
+                                'Stock_Sales_Ratio': product_info['Stock'] / (product_data['UnitsSold'].tail(7).mean() + 1),
+                                'Product_vs_Category_Performance': 1.0
+                            }
+                            future_data.append(row)
+
+                        future_df = pd.DataFrame(future_data)
+
+                        # Generate ML predictions
+                        X_future = future_df[features].fillna(0)
+                        predictions = model.predict(X_future)
+                        predictions = np.maximum(predictions, 0)
+
+                        # Add predictions to dataframe
+                        future_df['Predicted_Sales'] = predictions
+
+                        # Display product-specific model performance
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error for this product")
+                        with col2:
+                            st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error for this product")
+                        with col3:
+                            st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error for this product")
+
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                    # Display results
+                    st.markdown("<div class='section-header'>14-Day Forecast Analysis</div>", unsafe_allow_html=True)
+
+                    # Business metrics
+                    total_7_days = future_df['Predicted_Sales'].head(7).sum()
+                    total_14_days = future_df['Predicted_Sales'].head(14).sum()
+                    avg_per_day = future_df['Predicted_Sales'].mean()
+
+                    # GET CURRENT STOCK
+                    current_stock = float(product_info['Stock'])
+
+                    st.markdown("<div class='section-header'>Inventory Planning Analysis</div>", unsafe_allow_html=True)
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric(
+                            "Current Stock",
+                            f"{current_stock:.0f} units",
+                            help="Your actual current inventory level"
+                        )
+                    with col2:
+                        st.metric(
+                            "7-Day Forecast",
+                            f"{total_7_days:.0f} units",
+                            help="Predicted sales for next week"
+                        )
+                    with col3:
+                        st.metric(
+                            "14-Day Forecast",
+                            f"{total_14_days:.0f} units",
+                            help="Predicted sales for next 2 weeks"
+                        )
+                    with col4:
+                        remaining_after_14_days = current_stock - total_14_days
+                        st.metric(
+                            "Stock After 14 Days",
+                            f"{remaining_after_14_days:.0f} units",
+                            delta=f"{remaining_after_14_days - current_stock:.0f}",
+                            help="Expected remaining stock after 2 weeks"
+                        )
+
+                    # PRACTICAL BUSINESS RECOMMENDATIONS
+                    st.markdown("<div class='section-header'>Smart Ordering Recommendations</div>", unsafe_allow_html=True)
+
+                    # Calculate different scenarios
+                    remaining_after_7_days = current_stock - total_7_days
+                    remaining_after_14_days = current_stock - total_14_days
+
+                    # Safety stock recommendation (25% buffer)
+                    safety_stock_needed = total_14_days * 0.25
+
+                    if remaining_after_7_days <= 0:
+                        # Critical - will run out within a week
+                        shortage_7_days = abs(remaining_after_7_days)
+                        recommended_order = shortage_7_days + total_14_days + safety_stock_needed
+                        st.markdown(f"""
+                        <div class="alert-box alert-danger">
+                            <strong>CRITICAL SHORTAGE ALERT</strong><br>
+                            - You will run out of stock in <strong>less than 7 days</strong><br>
+                            - Shortage in 7 days: <strong>{shortage_7_days:.0f} units</strong><br>
+                            - <strong>URGENT ORDER NEEDED: {recommended_order:.0f} units</strong><br>
+                            - This covers the shortage + next 14 days + safety buffer
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    elif remaining_after_14_days <= 0:
+                        # Will run out within 2 weeks
+                        shortage_14_days = abs(remaining_after_14_days)
+                        recommended_order = shortage_14_days + safety_stock_needed
+                        st.markdown(f"""
+                        <div class="alert-box alert-warning">
+                            <strong>ORDER RECOMMENDED</strong><br>
+                            - Current stock will last: <strong>{(current_stock / avg_per_day):.1f} days</strong><br>
+                            - Will run short in 14 days by: <strong>{shortage_14_days:.0f} units</strong><br>
+                            - <strong>RECOMMENDED ORDER: {recommended_order:.0f} units</strong><br>
+                            - This covers the shortage + safety buffer
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    elif remaining_after_14_days <= safety_stock_needed:
+                        # Low stock after 2 weeks
+                        recommended_order = total_14_days  # Restock for next 2 weeks
+                        st.markdown(f"""
+                        <div class="alert-box alert-info">
+                            <strong>PLAN AHEAD</strong><br>
+                            - Stock after 14 days: <strong>{remaining_after_14_days:.0f} units</strong> (low)<br>
+                            - <strong>SUGGESTED ORDER: {recommended_order:.0f} units</strong><br>
+                            - This maintains healthy inventory levels<br>
+                            - Order timing: <strong>Within next week</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    else:
+                        # Stock is sufficient
+                        days_stock_will_last = current_stock / avg_per_day
+                        st.markdown(f"""
+                        <div class="alert-box alert-success">
+                            <strong>STOCK STATUS: GOOD</strong><br>
+                            - Current stock will last: <strong>{days_stock_will_last:.1f} days</strong><br>
+                            - After 14 days you'll have: <strong>{remaining_after_14_days:.0f} units</strong><br>
+                            - <strong>NO IMMEDIATE ORDER NEEDED</strong><br>
+                            - Next review recommended: <strong>In 1 week</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    # Additional insights
+                    st.markdown("<div class='section-header'>Business Summary</div>", unsafe_allow_html=True)
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**Quick Status Check:**")
+                        days_stock_will_last = current_stock / avg_per_day if avg_per_day > 0 else 0
+
+                        if days_stock_will_last >= 21:
+                            status_class = "alert-success"
+                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Well covered"
+                        elif days_stock_will_last >= 14:
+                            status_class = "alert-info"
+                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Good for now"
+                        elif days_stock_will_last >= 7:
+                            status_class = "alert-warning"
+                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Plan to reorder soon"
+                        else:
+                            status_class = "alert-danger"
+                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Order immediately!"
+
+                        st.markdown(f"""
+                        <div class="alert-box {status_class}">
+                            {status_text}
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    with col2:
+                        st.markdown("**Sales Value:**")
+                        st.write("Add price information to enable revenue calculations")
+
+                    # FORECAST CHART ONLY
+                    st.markdown("<div class='section-header'>14-Day Forecast Chart</div>", unsafe_allow_html=True)
+
+                    fig = go.Figure()
+
+                    # ONLY forecast data
+                    fig.add_trace(go.Scatter(
+                        x=future_df['Date'],
+                        y=future_df['Predicted_Sales'],
+                        mode='lines+markers',
+                        name='14-Day Forecast',
+                        line=dict(color='#667eea', width=3),
+                        marker=dict(size=6, color='#667eea')
+                    ))
+
+                    # Clean layout
+                    fig.update_layout(
+                        title=f'Sales Forecast: {selected_product}',
+                        xaxis_title='Date',
+                        yaxis_title='Predicted Units',
+                        height=400,
+                        showlegend=False
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                except Exception as e:
+                    st.markdown(f"""
+                    <div class="alert-box alert-danger">
+                        <strong>Error generating forecast:</strong> {str(e)}<br><br>
+                        <strong>Debug Info:</strong><br>
+                        - Product: {selected_product}<br>
+                        - Data points: {len(product_data)}<br>
+                        - Date range: {product_data['Date'].min()} to {product_data['Date'].max()}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    else:
+        st.markdown("""
+        <div class="alert-box alert-warning">
+            <strong>Warning:</strong> Please upload and clean your data on the Dashboard page first
+        </div>
+        """, unsafe_allow_html=True)
+
+# ========== Sidebar ==========
+st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+st.sidebar.subheader("Data Tools")
+
+if st.session_state.df_clean is not None:
+    if st.sidebar.button("Export Data"):
+        csv = st.session_state.df_clean.to_csv(index=False)
+        st.sidebar.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=f"ahva_data_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+st.sidebar.markdown("<hr>", unsafe_allow_html=True)
+st.sidebar.markdown("**Ahva Analytics Platform v3.0**")
+st.sidebar.markdown("*Advanced Analytics System*")
+st.sidebar.markdown("Built with Streamlit & scikit-learn")
+
+if st.session_state.df_clean is not None:
+    st.sidebar.markdown("""
+    <div class="status-badge badge-success">
+        System Ready!
+    </div>
+    """, unsafe_allow_html=True)
+    st.sidebar.markdown("""
+    <div class="status-badge badge-success">
+        ML Forecasting Active
+    </div>
+    """, unsafe_allow_html=True)import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -526,10 +1361,10 @@ def classify_products_by_cv(df):
     st.markdown("""
     <div class="alert-box alert-info">
         <strong>Product Classification:</strong><br>
-        Stable demand: {stable_count} products ({stable_count/len(product_stats_df)*100:.1f}%)<br>
-        Volatile demand: {volatile_count} products ({volatile_count/len(product_stats_df)*100:.1f}%)
+        Stable demand: {} products ({:.1f}%)<br>
+        Volatile demand: {} products ({:.1f}%)
     </div>
-    """.format(stable_count=stable_count, volatile_count=volatile_count), unsafe_allow_html=True)
+    """.format(stable_count, stable_count/len(product_stats_df)*100, volatile_count, volatile_count/len(product_stats_df)*100), unsafe_allow_html=True)
 
     # Add classification to main dataset
     df = df.merge(product_stats_df[['SKU', 'demand_group', 'cv']], on='SKU', how='left')
@@ -632,1022 +1467,3 @@ def build_exponential_smoothing_model(df_product):
         try:
             # Build model with current configuration
             if config.get('seasonal'):
-                model = ExponentialSmoothing(
-                    sales_series,
-                    trend=config.get('trend'),
-                    seasonal=config.get('seasonal'),
-                    seasonal_periods=config.get('seasonal_periods', 7),
-                    damped_trend=config.get('damped_trend', False)
-                ).fit(optimized=True, use_brute=True)
-            else:
-                model = ExponentialSmoothing(
-                    sales_series,
-                    trend=config.get('trend'),
-                    damped_trend=config.get('damped_trend', False)
-                ).fit(optimized=True, use_brute=True)
-
-            # Calculate error
-            fitted_values = model.fittedvalues
-            fitted_values = np.maximum(fitted_values, 0)  # No negative values
-            
-            mae = mean_absolute_error(sales_series, fitted_values)
-            
-            if mae < best_mae:
-                best_mae = mae
-                best_model = model
-                
-        except Exception as e:
-            continue  # Try next configuration
-
-    # Fallback to simple exponential smoothing if all failed
-    if best_model is None:
-        try:
-            best_model = ExponentialSmoothing(sales_series).fit(optimized=True)
-            fitted_values = np.maximum(best_model.fittedvalues, 0)
-            best_mae = mean_absolute_error(sales_series, fitted_values)
-        except:
-            raise ValueError("Failed to build any Exponential Smoothing model")
-
-    # Calculate final metrics
-    fitted_values = np.maximum(best_model.fittedvalues, 0)
-    mae = mean_absolute_error(sales_series, fitted_values)
-    rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-    mape = calculate_mape(sales_series, fitted_values)
-
-    return best_model, mae, rmse, mape
-
-# ========== Navigation ==========
-st.sidebar.markdown("<h2 class='sidebar-title'>System Navigation</h2>", unsafe_allow_html=True)
-page = st.sidebar.radio("Go to:", ["Dashboard", "Sales Analysis", "Seasonality Analysis", "Sales Forecasting"])
-
-# ========== Session State ==========
-if "df" not in st.session_state:
-    st.session_state.df = None
-if "df_clean" not in st.session_state:
-    st.session_state.df_clean = None
-
-# ========== DASHBOARD PAGE ==========
-if page == "Dashboard":
-    st.markdown("""
-    <h1>Ahva Advanced Analytics Platform</h1>
-    <p class='page-subtitle'>Professional Data Analysis & Sales Forecasting System</p>
-    <hr>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <div class="upload-area">
-        <h3 style="color: #667eea; margin-bottom: 1rem;">Data File Upload</h3>
-        <p style="color: #6c757d;">Upload your data file to begin comprehensive analysis</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    uploaded_file = st.file_uploader("Select Excel or CSV file", type=["xlsx", "xls", "csv"], help="Upload your sales data file")
-
-    if uploaded_file is not None:
-        try:
-            with st.spinner("טוען ומנתח את הנתונים..."):
-                if uploaded_file.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    df = pd.read_excel(uploaded_file)
-                st.session_state.df = df
-                df_clean = clean_data(df)
-                # Classify products by CV
-                df_clean = classify_products_by_cv(df_clean)
-                st.session_state.df_clean = df_clean
-
-            st.markdown("""
-            <div class="alert-box alert-success">
-                <strong>File uploaded and processed successfully!</strong><br>
-                System ready for advanced data analysis
-            </div>
-            """, unsafe_allow_html=True)
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Raw Data Overview:**")
-                st.write(f"- Original rows: {len(df):,}")
-                st.write(f"- Columns: {len(df.columns)}")
-                st.write(f"- File size: {uploaded_file.size / 1024:.1f} KB")
-
-            with col2:
-                st.markdown("**Processed Data Overview:**")
-                st.write(f"- Processed rows: {len(df_clean):,}")
-                st.write(f"- Data quality: {(len(df_clean)/len(df)*100):.1f}%")
-                st.write(f"- Ready for analysis: ✅")
-
-            with st.expander("Data Preview", expanded=False):
-                st.dataframe(df_clean.head(10), use_container_width=True)
-
-        except Exception as e:
-            st.markdown(f"""
-            <div class="alert-box alert-danger">
-                <strong>שגיאה בטעינת הקובץ:</strong><br>
-                {str(e)}
-            </div>
-            """, unsafe_allow_html=True)
-
-    if st.session_state.df_clean is not None:
-        df = st.session_state.df_clean
-
-        st.markdown("<hr><div class='section-header'>Date Range Filter</div>", unsafe_allow_html=True)
-
-        if 'Date' in df.columns and not df['Date'].isna().all():
-            min_date = df['Date'].min().date()
-            max_date = df['Date'].max().date()
-
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Date", value=min_date, min_value=min_date, max_value=max_date)
-            with col2:
-                end_date = st.date_input("End Date", value=max_date, min_value=min_date, max_value=max_date)
-
-            filtered_df = df[(df['Date'] >= pd.to_datetime(start_date)) & (df['Date'] <= pd.to_datetime(end_date))]
-            if len(filtered_df) == 0:
-                filtered_df = df
-        else:
-            filtered_df = df
-
-        # KPI CALCULATIONS
-        st.markdown("<div class='section-header'>Key Performance Indicators</div>", unsafe_allow_html=True)
-
-        total_products = filtered_df['Product'].nunique() if 'Product' in filtered_df.columns else 0
-        total_stock = int(filtered_df['Stock'].sum()) if 'Stock' in filtered_df.columns else 0
-        total_demand = int(filtered_df['UnitsSold'].sum()) if 'UnitsSold' in filtered_df.columns else 0
-
-        if 'UnitsSold' in filtered_df.columns and 'Stock' in filtered_df.columns:
-            shortages = (filtered_df['UnitsSold'] > filtered_df['Stock']).sum()
-            filtered_df["ShortageQty"] = (filtered_df["UnitsSold"] - filtered_df["Stock"]).clip(lower=0)
-            missing_units = int(filtered_df["ShortageQty"].sum())
-        else:
-            shortages = 0
-            missing_units = 0
-
-        efficiency = (total_demand / total_stock) * 100 if total_stock > 0 else 0
-        shortage_rate = (missing_units / total_demand) * 100 if total_demand > 0 else 0
-
-        st.markdown(f"""
-        <div class="kpi-container">
-            <div class="kpi-card">
-                <div class="kpi-title">Total Demand</div>
-                <div class="kpi-value">{total_demand:,}</div>
-                <div class="kpi-subtext">Units Sold</div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-title">Inventory Efficiency</div>
-                <div class="kpi-value">{efficiency:.1f}%</div>
-                <div class="kpi-subtext">Demand/Stock Ratio</div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-title">Shortage Rate</div>
-                <div class="kpi-value">{shortage_rate:.1f}%</div>
-                <div class="kpi-subtext">Missing Units/Total Demand</div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-title">Active Products</div>
-                <div class="kpi-value">{total_products}</div>
-                <div class="kpi-subtext">Unique Products</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-# ========== SALES ANALYSIS PAGE ==========
-elif page == "Sales Analysis":
-    st.markdown("<h1>Sales & Demand Analysis</h1><hr>", unsafe_allow_html=True)
-
-    if st.session_state.df_clean is not None:
-        df = st.session_state.df_clean.copy()
-
-        if 'Category' not in df.columns or 'UnitsSold' not in df.columns:
-            st.markdown("""
-            <div class="alert-box alert-danger">
-                <strong>Error:</strong> Missing required columns: Category, UnitsSold
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            # Sales by Category with Interactive Plotly Charts
-            st.markdown("<div class='section-header'>Sales Distribution by Category</div>", unsafe_allow_html=True)
-            category_sales = df.groupby("Category")["UnitsSold"].agg(['sum', 'mean', 'count']).reset_index()
-            category_sales.columns = ['Category', 'Total_Sales', 'Avg_Sales', 'Records']
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                fig_bar = px.bar(
-                    category_sales,
-                    x="Category",
-                    y="Total_Sales",
-                    color="Total_Sales",
-                    title="Total Units Sold by Category",
-                    labels={"Total_Sales": "Total Units Sold", "Category": "Category"},
-                    color_continuous_scale="Blues",
-                    text="Total_Sales"
-                )
-                fig_bar.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
-                fig_bar.update_layout(showlegend=False, height=400)
-                st.plotly_chart(fig_bar, use_container_width=True)
-
-            with col2:
-                fig_pie = px.pie(
-                    category_sales,
-                    values="Total_Sales",
-                    names="Category",
-                    title="Sales Distribution (%)",
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                fig_pie.update_layout(height=400)
-                st.plotly_chart(fig_pie, use_container_width=True)
-
-            st.markdown("<div class='data-table'>", unsafe_allow_html=True)
-            st.markdown("**Category Performance Summary:**")
-            category_sales['Avg_Sales'] = category_sales['Avg_Sales'].round(1)
-            st.dataframe(category_sales, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Time-based analysis
-            if 'Date' in df.columns and not df['Date'].isna().all():
-                st.markdown("<hr><div class='section-header'>Sales Trends Over Time</div>", unsafe_allow_html=True)
-
-                daily_sales = df.groupby('Date')['UnitsSold'].sum().reset_index()
-                fig_trend = px.line(
-                    daily_sales,
-                    x='Date',
-                    y='UnitsSold',
-                    title='Daily Sales Trend',
-                    labels={'UnitsSold': 'Units Sold', 'Date': 'Date'}
-                )
-                fig_trend.update_traces(line_color='#667eea', line_width=3)
-                fig_trend.update_layout(height=400)
-                st.plotly_chart(fig_trend, use_container_width=True)
-
-                st.markdown("<div class='section-header'>Sales Pattern Analysis</div>", unsafe_allow_html=True)
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    df['DayName'] = df['Date'].dt.day_name()
-                    daily_pattern = df.groupby('DayName')['UnitsSold'].sum().reset_index()
-
-                    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                    daily_pattern['DayName'] = pd.Categorical(daily_pattern['DayName'], categories=day_order, ordered=True)
-                    daily_pattern = daily_pattern.sort_values('DayName')
-
-                    fig_daily = px.bar(
-                        daily_pattern,
-                        x='DayName',
-                        y='UnitsSold',
-                        title="Sales by Day of Week",
-                        labels={'UnitsSold': 'Units Sold', 'DayName': 'Day of Week'},
-                        color='UnitsSold',
-                        color_continuous_scale='Blues'
-                    )
-                    fig_daily.update_layout(showlegend=False, height=400)
-                    st.plotly_chart(fig_daily, use_container_width=True)
-
-                with col2:
-                    product_velocity = df.groupby('Product')['UnitsSold'].agg(['sum', 'mean']).reset_index()
-                    product_velocity.columns = ['Product', 'Total_Sales', 'Avg_Daily_Sales']
-                    top_products = product_velocity.nlargest(10, 'Total_Sales')
-
-                    fig_products = px.bar(
-                        top_products,
-                        x='Total_Sales',
-                        y='Product',
-                        orientation='h',
-                        title='Top 10 Products by Sales',
-                        labels={'Total_Sales': 'Total Sales', 'Product': 'Product'},
-                        color='Total_Sales',
-                        color_continuous_scale='Viridis'
-                    )
-                    fig_products.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
-                    st.plotly_chart(fig_products, use_container_width=True)
-
-    else:
-        st.markdown("""
-        <div class="alert-box alert-warning">
-            <strong>Warning:</strong> Please upload a data file on the Dashboard page first
-        </div>
-        """, unsafe_allow_html=True)
-
-# ========== SEASONALITY ANALYSIS PAGE ==========
-elif page == "Seasonality Analysis":
-    st.markdown("<h1>Seasonality Analysis</h1><hr>", unsafe_allow_html=True)
-
-    if st.session_state.df_clean is not None:
-        df = st.session_state.df_clean.copy()
-
-        if 'Product' not in df.columns or 'UnitsSold' not in df.columns or 'Date' not in df.columns:
-            st.markdown("""
-            <div class="alert-box alert-danger">
-                <strong>Error:</strong> Missing required columns: Product, UnitsSold, Date
-            </div>
-            """, unsafe_allow_html=True)
-        elif df['Date'].isna().all():
-            st.markdown("""
-            <div class="alert-box alert-danger">
-                <strong>Error:</strong> Date column contains no valid dates
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            products = df['Product'].unique()
-            selected_product = st.selectbox("Select Product for Analysis:", products)
-
-            product_data = df[df['Product'] == selected_product].copy()
-
-            if len(product_data) == 0:
-                st.markdown("""
-                <div class="alert-box alert-warning">
-                    <strong>Warning:</strong> No data found for selected product
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"<div class='section-header'>Seasonality Analysis for {selected_product}</div>", unsafe_allow_html=True)
-
-                product_data['Month'] = product_data['Date'].dt.month
-                product_data['MonthName'] = product_data['Date'].dt.month_name()
-                monthly_sales = product_data.groupby(['Month', 'MonthName'])['UnitsSold'].sum().reset_index()
-                monthly_sales.columns = ['Month', 'MonthName', 'Total_Sales']
-
-                fig_monthly = px.line(
-                    monthly_sales,
-                    x='MonthName',
-                    y='Total_Sales',
-                    markers=True,
-                    title=f"Monthly Sales Pattern for {selected_product}",
-                    labels={'Total_Sales': 'Total Units Sold', 'MonthName': 'Month'}
-                )
-                fig_monthly.update_traces(line_color='#667eea', marker_size=10, line_width=4)
-                fig_monthly.update_layout(height=400)
-                st.plotly_chart(fig_monthly, use_container_width=True)
-
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Sales", f"{product_data['UnitsSold'].sum():,.0f}")
-                with col2:
-                    if len(monthly_sales) > 0:
-                        peak_month = monthly_sales.loc[monthly_sales['Total_Sales'].idxmax(), 'MonthName']
-                        st.metric("Peak Month", peak_month)
-                with col3:
-                    avg_monthly = monthly_sales['Total_Sales'].mean()
-                    st.metric("Monthly Average", f"{avg_monthly:.1f}")
-                with col4:
-                    if len(monthly_sales) > 0:
-                        peak_ratio = monthly_sales['Total_Sales'].max() / monthly_sales['Total_Sales'].mean()
-                        st.metric("Seasonality Index", f"{peak_ratio:.1f}x")
-
-                st.markdown("<hr><div class='section-header'>Weekly Sales Pattern</div>", unsafe_allow_html=True)
-
-                product_data['DayOfWeek'] = product_data['Date'].dt.day_name()
-                weekly_sales = product_data.groupby('DayOfWeek')['UnitsSold'].sum().reset_index()
-
-                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                weekly_sales['DayOfWeek'] = pd.Categorical(weekly_sales['DayOfWeek'], categories=day_order, ordered=True)
-                weekly_sales = weekly_sales.sort_values('DayOfWeek')
-
-                fig_weekly = px.bar(
-                    weekly_sales,
-                    x='DayOfWeek',
-                    y='UnitsSold',
-                    title=f"Weekly Sales Pattern for {selected_product}",
-                    labels={'UnitsSold': 'Units Sold', 'DayOfWeek': 'Day of Week'},
-                    color='UnitsSold',
-                    color_continuous_scale='Blues'
-                )
-                fig_weekly.update_layout(showlegend=False, height=400)
-                st.plotly_chart(fig_weekly, use_container_width=True)
-
-    else:
-        st.markdown("""
-        <div class="alert-box alert-warning">
-            <strong>Warning:</strong> Please upload a data file on the Dashboard page first
-        </div>
-        """, unsafe_allow_html=True)
-
-# ========== SALES FORECASTING PAGE ==========
-elif page == "Sales Forecasting":
-    st.markdown("<h1>Advanced Sales Forecasting</h1><hr>", unsafe_allow_html=True)
-
-    if st.session_state.df_clean is not None:
-        df = st.session_state.df_clean.copy()
-
-        st.markdown("<div class='section-header'>Advanced Machine Learning Prediction Engine</div>", unsafe_allow_html=True)
-
-        if len(df) < 15:
-            st.markdown("""
-            <div class="alert-box alert-danger">
-                <strong>Error:</strong> Insufficient data for reliable forecasting. Need at least 15 records.<br>
-                Try uploading more historical data for better predictions.
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            # Model selection
-            st.markdown("**Select Forecasting Method:**")
-            col1, col2 = st.columns(2)
-
-            with col1:
-                model_type = st.selectbox("Choose Model:",
-                    ["Advanced ML (Recommended)", "Statistical Backup"],
-                    help="Advanced ML uses Random Forest with 20+ features. Statistical backup uses trend analysis."
-                )
-
-            with col2:
-                confidence_level = st.selectbox("Confidence Level:",
-                    ["High (±10%)", "Medium (±15%)", "Low (±20%)"],
-                    index=1,
-                    help="Higher confidence = narrower prediction bands"
-                )
-
-            # Extract confidence percentage
-            confidence_pct = {"High (±10%)": 0.10, "Medium (±15%)": 0.15, "Low (±20%)": 0.20}[confidence_level]
-
-            if model_type == "Advanced ML (Recommended)":
-                with st.spinner("Building enhanced Random Forest model with 20+ features..."):
-                    try:
-                        # Prepare enhanced data
-                        df_forecast = prepare_forecast_data_enhanced(df)
-
-                        # Build enhanced model
-                        model, features, mae, rmse, mape = build_random_forest_model(df_forecast)
-
-                        # Display enhanced model performance
-                        st.markdown("""
-                        <div class="alert-box alert-success">
-                            <strong>Enhanced Random Forest model trained successfully!</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
-                        with col2:
-                            st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
-                        with col3:
-                            st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
-
-                        # Model quality assessment
-                        if mape < 10:
-                            st.markdown("""
-                            <div class="alert-box alert-success">
-                                Excellent model quality! High confidence in predictions.
-                            </div>
-                            """, unsafe_allow_html=True)
-                        elif mape < 20:
-                            st.markdown("""
-                            <div class="alert-box alert-info">
-                                Good model quality. Reliable predictions expected.
-                            </div>
-                            """, unsafe_allow_html=True)
-                        elif mape < 30:
-                            st.markdown("""
-                            <div class="alert-box alert-warning">
-                                Moderate model quality. Use predictions with caution.
-                            </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.markdown("""
-                            <div class="alert-box alert-danger">
-                                Poor model quality. Consider using Statistical Backup method.
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                        use_ml_model = True
-
-                    except Exception as e:
-                        st.markdown(f"""
-                        <div class="alert-box alert-danger">
-                            <strong>ML model failed:</strong> {str(e)}
-                        </div>
-                        """, unsafe_allow_html=True)
-                        st.stop()
-            else:
-                st.markdown("""
-                <div class="alert-box alert-danger">
-                    Statistical backup method has been disabled. Please use Advanced ML method.
-                </div>
-                """, unsafe_allow_html=True)
-                st.stop()
-
-            # Product selection for forecasting
-            st.markdown("<hr><div class='section-header'>Generate 14-Day Forecast</div>", unsafe_allow_html=True)
-
-            selected_product = st.selectbox("Select Product:", df['Product'].unique())
-
-            if st.button("Generate 14-Day Forecast", type="primary"):
-                        # Get CV from the classification data
-                        if 'cv' in product_data.columns and not product_data['cv'].isna().all():
-                            cv = product_data['cv'].iloc[0]
-                        else:
-                            # Fallback calculation if CV not found
-                            product_sales = product_data['UnitsSold']
-                            cv = calculate_cv(product_sales)
-
-                        # Use fixed CV threshold of 0.5 for classification
-                        if cv <= 0.5:
-                            # Use Exponential Smoothing for stable demand
-                            st.markdown("""
-                            <div class="forecast-section">
-                                <div class='section-header'>Exponential Smoothing Forecast Results</div>
-                            """, unsafe_allow_html=True)
-                            
-                            st.markdown(f"""
-                            <div class="alert-box alert-info">
-                                Using Exponential Smoothing (CV = {cv:.3f} ≤ 0.5 - Stable Demand)
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                            try:
-                                es_model, mae, rmse, mape = build_exponential_smoothing_model(product_data)
-
-                                # Generate forecast
-                                forecast = es_model.forecast(steps=forecast_days)
-                                forecast = np.maximum(forecast, 0)
-
-                                # Create future dates
-                                last_date = product_data['Date'].max()
-                                future_dates = []
-                                for i in range(1, forecast_days + 1):
-                                    future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
-
-                                future_df = pd.DataFrame({
-                                    'Date': future_dates,
-                                    'Predicted_Sales': forecast
-                                })
-
-                                # Display model performance
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
-                                with col2:
-                                    st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
-                                with col3:
-                                    st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
-
-                            except Exception as e:
-                                st.markdown(f"""
-                                <div class="alert-box alert-danger">
-                                    <strong>Exponential Smoothing failed:</strong> {str(e)}
-                                </div>
-                                """, unsafe_allow_html=True)
-                                st.stop()
-                        else:
-                        # Use Random Forest for volatile demand
-                        st.markdown("""
-                        <div class="forecast-section">
-                            <div class='section-header'>Advanced ML Forecast Results</div>
-                        """, unsafe_allow_html=True)
-                        
-                        st.markdown(f"""
-                        <div class="alert-box alert-info">
-                            Using Random Forest (CV = {cv:.3f} > 0.5 - Volatile Demand)
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        # Create future dates
-                        last_date = df['Date'].max()
-                        future_dates = []
-                        for i in range(1, forecast_days + 1):
-                            future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
-
-                        # Prepare future data for ML model
-                        future_data = []
-                        for date in future_dates:
-                            row = {
-                                'Date': date,
-                                'Product': selected_product,
-                                'Month': date.month,
-                                'DayOfWeek': date.dayofweek,
-                                'WeekOfYear': date.isocalendar().week,
-                                'Quarter': date.quarter,
-                                'DayOfMonth': date.day,
-                                'IsWeekend': 1 if date.dayofweek >= 5 else 0,
-                                'IsMonthStart': 1 if date.day == 1 else 0,
-                                'IsMonthEnd': 1 if date.is_month_end else 0,
-                                'Product_encoded': pd.Categorical([selected_product], categories=df['Product'].unique()).codes[0],
-                                'Category_encoded': pd.Categorical([product_info['Category']], categories=df['Category'].unique()).codes[0],
-                                'Stock': product_info['Stock'],
-                                'Sales_MA_3': product_data['UnitsSold'].tail(3).mean(),
-                                'Sales_MA_7': product_data['UnitsSold'].tail(7).mean(),
-                                'Sales_MA_14': product_data['UnitsSold'].tail(14).mean(),
-                                'Sales_MA_30': product_data['UnitsSold'].tail(30).mean(),
-                                'Sales_Trend_7': 0,
-                                'Stock_Sales_Ratio': product_info['Stock'] / (product_data['UnitsSold'].tail(7).mean() + 1),
-                                'Product_vs_Category_Performance': 1.0
-                            }
-                            future_data.append(row)
-
-                        future_df = pd.DataFrame(future_data)
-
-                        # Generate ML predictions
-                        X_future = future_df[features].fillna(0)
-                        predictions = model.predict(X_future)
-                        predictions = np.maximum(predictions, 0)
-
-                        # Add predictions to dataframe
-                        future_df['Predicted_Sales'] = predictions
-
-                        # Check if predictions are too flat and enhance if needed
-                        variation = predictions.max() - predictions.min()
-                        if variation < 2:
-                            # Use historical day-of-week patterns to enhance
-                            ml_average = predictions.mean()
-                            historical_by_day = product_data.groupby(product_data['Date'].dt.dayofweek)['UnitsSold'].mean()
-                            overall_avg = product_data['UnitsSold'].mean()
-
-                            enhanced_predictions = []
-                            for i, pred in enumerate(predictions):
-                                date = future_df.iloc[i]['Date']
-                                day_of_week = date.dayofweek
-
-                                if day_of_week in historical_by_day.index:
-                                    day_multiplier = historical_by_day[day_of_week] / overall_avg
-                                    enhanced_pred = ml_average * day_multiplier
-                                else:
-                                    enhanced_pred = pred
-
-                                # Add small random variation
-                                import random
-                                enhanced_pred *= (0.95 + random.random() * 0.1)
-                                enhanced_predictions.append(max(0, enhanced_pred))
-
-                            future_df['Predicted_Sales'] = enhanced_predictions
-                            st.markdown("""
-                            <div class="alert-box alert-info">
-                                Enhanced predictions with historical day-of-week patterns
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                        # Calculate product-specific model performance
-                        product_forecast_data = df_forecast[df_forecast['Product'] == selected_product]
-                        if len(product_forecast_data) > 5:
-                            # Split product data for validation
-                            test_size = min(0.3, max(0.2, len(product_forecast_data) // 5))
-                            if len(product_forecast_data) > 10:
-                                train_data = product_forecast_data.iloc[:-int(len(product_forecast_data)*test_size)]
-                                test_data = product_forecast_data.iloc[-int(len(product_forecast_data)*test_size):]
-                                
-                                # Predict on test data
-                                X_test_product = test_data[features].fillna(0)
-                                y_test_product = test_data['UnitsSold']
-                                y_pred_product = model.predict(X_test_product)
-                                
-                                # Calculate product-specific metrics
-                                product_mae = mean_absolute_error(y_test_product, y_pred_product)
-                                product_rmse = np.sqrt(mean_squared_error(y_test_product, y_pred_product))
-                                product_mape = calculate_mape(y_test_product, y_pred_product)
-                            else:
-                                # Use global metrics if insufficient data
-                                product_mae, product_rmse, product_mape = mae, rmse, mape
-                        else:
-                            # Use global metrics if insufficient data
-                            product_mae, product_rmse, product_mape = mae, rmse, mape
-
-                        # Display product-specific model performance
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("MAE", f"{product_mae:.2f}", help="Mean Absolute Error for this product")
-                        with col2:
-                            st.metric("RMSE", f"{product_rmse:.2f}", help="Root Mean Square Error for this product")
-                        with col3:
-                            st.metric("MAPE", f"{product_mape:.1f}%", help="Mean Absolute Percentage Error for this product")
-
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                    # Display results
-                    st.markdown("<div class='section-header'>14-Day Forecast Analysis</div>", unsafe_allow_html=True)
-
-                    # Business metrics
-                    total_7_days = future_df['Predicted_Sales'].head(7).sum()
-                    total_14_days = future_df['Predicted_Sales'].head(14).sum()
-                    avg_per_day = future_df['Predicted_Sales'].mean()
-
-                    # GET CURRENT STOCK
-                    current_stock = float(product_info['Stock'])
-
-                    st.markdown("<div class='section-header'>Inventory Planning Analysis</div>", unsafe_allow_html=True)
-
-                    col1, col2, col3, col4 = st.columns(4)
-
-                    with col1:
-                        st.metric(
-                            "Current Stock",
-                            f"{current_stock:.0f} units",
-                            help="Your actual current inventory level"
-                        )
-                    with col2:
-                        st.metric(
-                            "7-Day Forecast",
-                            f"{total_7_days:.0f} units",
-                            help="Predicted sales for next week"
-                        )
-                    with col3:
-                        st.metric(
-                            "14-Day Forecast",
-                            f"{total_14_days:.0f} units",
-                            help="Predicted sales for next 2 weeks"
-                        )
-                    with col4:
-                        remaining_after_14_days = current_stock - total_14_days
-                        st.metric(
-                            "Stock After 14 Days",
-                            f"{remaining_after_14_days:.0f} units",
-                            delta=f"{remaining_after_14_days - current_stock:.0f}",
-                            help="Expected remaining stock after 2 weeks"
-                        )
-
-                    # PRACTICAL BUSINESS RECOMMENDATIONS
-                    st.markdown("<div class='section-header'>Smart Ordering Recommendations</div>", unsafe_allow_html=True)
-
-                    # Calculate different scenarios
-                    remaining_after_7_days = current_stock - total_7_days
-                    remaining_after_14_days = current_stock - total_14_days
-
-                    # Safety stock recommendation (25% buffer)
-                    safety_stock_needed = total_14_days * 0.25
-
-                    if remaining_after_7_days <= 0:
-                        # Critical - will run out within a week
-                        shortage_7_days = abs(remaining_after_7_days)
-                        recommended_order = shortage_7_days + total_14_days + safety_stock_needed
-                        st.markdown(f"""
-                        <div class="alert-box alert-danger">
-                            <strong>CRITICAL SHORTAGE ALERT</strong><br>
-                            - You will run out of stock in <strong>less than 7 days</strong><br>
-                            - Shortage in 7 days: <strong>{shortage_7_days:.0f} units</strong><br>
-                            - <strong>URGENT ORDER NEEDED: {recommended_order:.0f} units</strong><br>
-                            - This covers the shortage + next 14 days + safety buffer
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    elif remaining_after_14_days <= 0:
-                        # Will run out within 2 weeks
-                        shortage_14_days = abs(remaining_after_14_days)
-                        recommended_order = shortage_14_days + safety_stock_needed
-                        st.markdown(f"""
-                        <div class="alert-box alert-warning">
-                            <strong>ORDER RECOMMENDED</strong><br>
-                            - Current stock will last: <strong>{(current_stock / avg_per_day):.1f} days</strong><br>
-                            - Will run short in 14 days by: <strong>{shortage_14_days:.0f} units</strong><br>
-                            - <strong>RECOMMENDED ORDER: {recommended_order:.0f} units</strong><br>
-                            - This covers the shortage + safety buffer
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    elif remaining_after_14_days <= safety_stock_needed:
-                        # Low stock after 2 weeks
-                        recommended_order = total_14_days  # Restock for next 2 weeks
-                        st.markdown(f"""
-                        <div class="alert-box alert-info">
-                            <strong>PLAN AHEAD</strong><br>
-                            - Stock after 14 days: <strong>{remaining_after_14_days:.0f} units</strong> (low)<br>
-                            - <strong>SUGGESTED ORDER: {recommended_order:.0f} units</strong><br>
-                            - This maintains healthy inventory levels<br>
-                            - Order timing: <strong>Within next week</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    else:
-                        # Stock is sufficient
-                        days_stock_will_last = current_stock / avg_per_day
-                        st.markdown(f"""
-                        <div class="alert-box alert-success">
-                            <strong>STOCK STATUS: GOOD</strong><br>
-                            - Current stock will last: <strong>{days_stock_will_last:.1f} days</strong><br>
-                            - After 14 days you'll have: <strong>{remaining_after_14_days:.0f} units</strong><br>
-                            - <strong>NO IMMEDIATE ORDER NEEDED</strong><br>
-                            - Next review recommended: <strong>In 1 week</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    # Additional insights
-                    st.markdown("<div class='section-header'>Business Summary</div>", unsafe_allow_html=True)
-
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.markdown("**Quick Status Check:**")
-                        days_stock_will_last = current_stock / avg_per_day if avg_per_day > 0 else 0
-
-                        if days_stock_will_last >= 21:
-                            status_class = "alert-success"
-                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Well covered"
-                        elif days_stock_will_last >= 14:
-                            status_class = "alert-info"
-                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Good for now"
-                        elif days_stock_will_last >= 7:
-                            status_class = "alert-warning"
-                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Plan to reorder soon"
-                        else:
-                            status_class = "alert-danger"
-                            status_text = f"**{days_stock_will_last:.0f} days of stock** - Order immediately!"
-
-                        st.markdown(f"""
-                        <div class="alert-box {status_class}">
-                            {status_text}
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    with col2:
-                        st.markdown("**Sales Value:**")
-                        st.write("Add price information to enable revenue calculations")
-
-                    # FORECAST CHART ONLY
-                    st.markdown("<div class='section-header'>14-Day Forecast Chart</div>", unsafe_allow_html=True)
-
-                    fig = go.Figure()
-
-                    # ONLY forecast data
-                    fig.add_trace(go.Scatter(
-                        x=future_df['Date'],
-                        y=future_df['Predicted_Sales'],
-                        mode='lines+markers',
-                        name='14-Day Forecast',
-                        line=dict(color='#667eea', width=3),
-                        marker=dict(size=6, color='#667eea')
-                    ))
-
-                    # Clean layout
-                    fig.update_layout(
-                        title=f'Sales Forecast: {selected_product}',
-                        xaxis_title='Date',
-                        yaxis_title='Predicted Units',
-                        height=400,
-                        showlegend=False
-                    )
-
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    except Exception as e:
-                        st.markdown(f"""
-                        <div class="alert-box alert-danger">
-                            <strong>Error generating forecast:</strong> {str(e)}<br><br>
-                            <strong>Debug Info:</strong><br>
-                            - Product: {selected_product}<br>
-                            - Data points: {len(product_data)}<br>
-                            - Date range: {product_data['Date'].min()} to {product_data['Date'].max()}
-                        </div>
-                        """, unsafe_allow_html=True)
-
-    else:
-        st.markdown("""
-        <div class="alert-box alert-warning">
-            <strong>Warning:</strong> Please upload and clean your data on the Dashboard page first
-        </div>
-        """, unsafe_allow_html=True)days)
-                        recommended_order = shortage_7_days + total_14_days + safety_stock_needed
-                        st.markdown(f"""
-                        <div class="alert-box alert-danger">
-                            <strong>התראת מחסור קריטי</strong><br>
-                            - המלאי ייגמר תוך <strong>פחות מ-7 ימים</strong><br>
-                            - מחסור בעוד 7 ימים: <strong>{shortage_7_days:.0f} יחידות</strong><br>
-                            - <strong>נדרשת הזמנה דחופה: {recommended_order:.0f} יחידות</strong><br>
-                            - כולל כיסוי המחסור + 14 הימים הבאים + מלאי ביטחון
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    elif remaining_after_14_days <= 0:
-                        # Will run out within 2 weeks
-                        shortage_14_days = abs(remaining_after_14_days)
-                        recommended_order = shortage_14_days + safety_stock_needed
-                        st.markdown(f"""
-                        <div class="alert-box alert-warning">
-                            <strong>מומלצת הזמנה</strong><br>
-                            - המלאי הנוכחי יחזיק: <strong>{(current_stock / avg_per_day):.1f} ימים</strong><br>
-                            - יהיה מחסור בעוד 14 ימים של: <strong>{shortage_14_days:.0f} יחידות</strong><br>
-                            - <strong>הזמנה מומלצת: {recommended_order:.0f} יחידות</strong><br>
-                            - כולל כיסוי המחסור + מלאי ביטחון
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    elif remaining_after_14_days <= safety_stock_needed:
-                        # Low stock after 2 weeks
-                        recommended_order = total_14_days  # Restock for next 2 weeks
-                        st.markdown(f"""
-                        <div class="alert-box alert-info">
-                            <strong>תכנון מראש</strong><br>
-                            - מלאי אחרי 14 ימים: <strong>{remaining_after_14_days:.0f} יחידות</strong> (נמוך)<br>
-                            - <strong>הזמנה מוצעת: {recommended_order:.0f} יחידות</strong><br>
-                            - שמירה על רמות מלאי בריאות<br>
-                            - עיתוי הזמנה: <strong>תוך השבוע הבא</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    else:
-                        # Stock is sufficient
-                        days_stock_will_last = current_stock / avg_per_day
-                        st.markdown(f"""
-                        <div class="alert-box alert-success">
-                            <strong>מצב מלאי: טוב</strong><br>
-                            - המלאי הנוכחי יחזיק: <strong>{days_stock_will_last:.1f} ימים</strong><br>
-                            - אחרי 14 ימים יישארו לך: <strong>{remaining_after_14_days:.0f} יחידות</strong><br>
-                            - <strong>אין צורך בהזמנה מיידית</strong><br>
-                            - ביקורת הבאה מומלצת: <strong>בעוד שבוע</strong>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    # Additional insights
-                    st.markdown("<div class='section-header'>סיכום עסקי</div>", unsafe_allow_html=True)
-
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.markdown("**בדיקת סטטוס מהירה:**")
-                        days_stock_will_last = current_stock / avg_per_day if avg_per_day > 0 else 0
-
-                        if days_stock_will_last >= 21:
-                            status_class = "alert-success"
-                            status_text = f"**{days_stock_will_last:.0f} ימי מלאי** - מכוסה היטב"
-                        elif days_stock_will_last >= 14:
-                            status_class = "alert-info"
-                            status_text = f"**{days_stock_will_last:.0f} ימי מלאי** - טוב לעת עתה"
-                        elif days_stock_will_last >= 7:
-                            status_class = "alert-warning"
-                            status_text = f"**{days_stock_will_last:.0f} ימי מלאי** - תכנן להזמין בקרוב"
-                        else:
-                            status_class = "alert-danger"
-                            status_text = f"**{days_stock_will_last:.0f} ימי מלאי** - הזמן מיד!"
-
-                        st.markdown(f"""
-                        <div class="alert-box {status_class}">
-                            {status_text}
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    with col2:
-                        st.markdown("**ערך מכירות:**")
-                        st.write("הוסף מידע מחיר לאפשר חישובי הכנסות")
-
-                    # FORECAST CHART ONLY
-                    st.markdown("<div class='section-header'>גרף חיזוי ל-14 ימים</div>", unsafe_allow_html=True)
-
-                    fig = go.Figure()
-
-                    # ONLY forecast data
-                    fig.add_trace(go.Scatter(
-                        x=future_df['Date'],
-                        y=future_df['Predicted_Sales'],
-                        mode='lines+markers',
-                        name='חיזוי ל-14 ימים',
-                        line=dict(color='#667eea', width=3),
-                        marker=dict(size=6, color='#667eea')
-                    ))
-
-                    # Clean layout
-                    fig.update_layout(
-                        title=f'חיזוי מכירות: {selected_product}',
-                        xaxis_title='תאריך',
-                        yaxis_title='יחידות צפויות',
-                        height=400,
-                        showlegend=False
-                    )
-
-                    st.plotly_chart(fig, use_container_width=True)
-
-                except Exception as e:
-                    st.markdown(f"""
-                    <div class="alert-box alert-danger">
-                        <strong>שגיאה ביצירת חיזוי:</strong> {str(e)}<br><br>
-                        <strong>מידע דיבוג:</strong><br>
-                        - מוצר: {selected_product}<br>
-                        - נקודות נתונים: {len(product_data)}<br>
-                        - טווח תאריכים: {product_data['Date'].min()} עד {product_data['Date'].max()}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-    else:
-        st.markdown("""
-        <div class="alert-box alert-warning">
-            <strong>התראה:</strong> אנא העלה ונקה את הנתונים שלך בדף הבית תחילה
-        </div>
-        """, unsafe_allow_html=True)
-
-# ========== Sidebar ==========
-st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-st.sidebar.subheader("Data Tools")
-
-if st.session_state.df_clean is not None:
-    if st.sidebar.button("Export Data"):
-        csv = st.session_state.df_clean.to_csv(index=False)
-        st.sidebar.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name=f"ahva_data_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-
-st.sidebar.markdown("<hr>", unsafe_allow_html=True)
-st.sidebar.markdown("**Ahva Analytics Platform v3.0**")
-st.sidebar.markdown("*Advanced Analytics System*")
-st.sidebar.markdown("Built with Streamlit & scikit-learn")
-
-if st.session_state.df_clean is not None:
-    st.sidebar.markdown("""
-    <div class="status-badge badge-success">
-        System Ready!
-    </div>
-    """, unsafe_allow_html=True)
-    st.sidebar.markdown("""
-    <div class="status-badge badge-success">
-        ML Forecasting Active
-    </div>
-    """, unsafe_allow_html=True)
