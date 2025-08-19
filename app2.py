@@ -476,50 +476,83 @@ def build_random_forest_model(df_forecast):
 def build_exponential_smoothing_model(df_product):
     """
     Exponential Smoothing with validation-based selection.
-    Fixes:
-      - use_boxcox set ONLY at model init (not in fit)
-      - winsorize via Series.clip to keep a pandas Series
-      - always returns (model, mae, rmse, mape)
+    Improvements:
+      • Selection by WAPE (robust with zeros) instead of RMSE only
+      • Ignores stockout days (Stock==0) in validation metrics if column exists
+      • Wider config search: weekly/biweekly seasonality + damped trend
+      • Box-Cox set ONLY at init and kept consistent
+      • Always returns (model, mae, rmse, mape)
     """
     import numpy as np
     import pandas as pd
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
     from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-    # --- prep daily series ---
-    s = (df_product.sort_values('Date')
-                    .set_index('Date')['UnitsSold']
-                    .resample('D').sum()
-                    .astype(float)
-                    .fillna(0.0))
+    # ---------- helpers ----------
+    def _safe_mape(y_true, y_pred):
+        try:
+            return calculate_mape(y_true, y_pred)  # אם יש פונקציה קיימת בקוד שלך
+        except Exception:
+            y_true = np.asarray(y_true, dtype=float)
+            y_pred = np.asarray(y_pred, dtype=float)
+            denom = np.where((np.abs(y_true) + np.abs(y_pred)) == 0, 1.0, (np.abs(y_true) + np.abs(y_pred)))
+            return float(np.mean(2.0 * np.abs(y_true - y_pred) / denom) * 100.0)  # SMAPE כגיבוי
 
-    # trim to first/last non-zero to avoid long zero tails
+    def _wape(y_true, y_pred, mask=None):
+        y_true = np.asarray(y_true, dtype=float)
+        y_pred = np.asarray(y_pred, dtype=float)
+        if mask is not None:
+            y_true = y_true[mask]
+            y_pred = y_pred[mask]
+        denom = np.sum(np.abs(y_true))
+        if denom <= 0:
+            return np.inf
+        return float(np.sum(np.abs(y_true - y_pred)) / denom)
+
+    # ---------- build daily series ----------
+    s = (df_product.sort_values('Date')
+                   .set_index('Date')['UnitsSold']
+                   .resample('D').sum()
+                   .astype(float)
+                   .fillna(0.0))
+
+    # trim to first & last non-zero (avoid long zero tails)
     nz = s > 0
     if nz.any():
         s = s.loc[nz.idxmax():nz[::-1].idxmax()]
 
-    # if still too short -> trivial SES fallback that STILL returns metrics
+    # very short => trivial SES fallback (עדיין מחזיר מדדים!)
     if len(s) < 7:
-        m = ExponentialSmoothing(s, initialization_method="estimated",
-                                 use_boxcox=None).fit(optimized=True, use_brute=True, remove_bias=True)
+        m = ExponentialSmoothing(s, initialization_method="estimated", use_boxcox=None) \
+                .fit(optimized=True, use_brute=True, remove_bias=True)
         fitted = np.maximum(m.fittedvalues, 0.0)
         mae = mean_absolute_error(s, fitted)
         rmse = (mean_squared_error(s, fitted)) ** 0.5
-        mape = calculate_mape(s.values, fitted.values)
+        mape = _safe_mape(s.values, fitted.values)
         return m, mae, rmse, mape
 
-    # gentle winsorization (keeps Series!)
+    # gentle winsorization that keeps Series
     if len(s) > 30:
         s = s.clip(upper=float(np.quantile(s, 0.99)))
 
-    # --- validation window 7–14 days ---
+    # ---------- validation split (7–14 days) ----------
     val_h = max(7, min(14, len(s) // 5))
     train, valid = s.iloc[:-val_h], s.iloc[-val_h:]
 
-    # Box-Cox only if strictly positive on both train and full
-    bc_flag = True if (train > 0).all() and (s > 0).all() else None  # None => no Box-Cox
+    # build stockout mask for validation (if Stock column exists)
+    stock_mask = None
+    if 'Stock' in df_product.columns:
+        stock_daily_min = (df_product[['Date', 'Stock']]
+                           .assign(Date=lambda d: pd.to_datetime(d['Date']))
+                           .groupby(df_product['Date'].dt.normalize())['Stock']
+                           .min())
+        stock_daily_min = stock_daily_min.reindex(valid.index, method=None)  # יישור לפי אינדקס הולידציה
+        stock_mask = ~(stock_daily_min.fillna(1) == 0)  # True = לספור במדד, False = להתעלם (חוסר מלאי)
 
-    # candidate configs
+    # Box-Cox only if strictly positive both on train & full series
+    bc_flag = True if (train > 0).all() and (s > 0).all() else None
+
+    # ---------- candidate configs ----------
     configs = []
     base_trends = [None, 'add']
     damp_opts = [False, True]
@@ -528,13 +561,13 @@ def build_exponential_smoothing_model(df_product):
         for dm in damp_opts:
             configs.append({'trend': tr, 'seasonal': None, 'seasonal_periods': None, 'damped_trend': dm})
             if has_weekly:
-                configs.append({'trend': tr, 'seasonal': 'add', 'seasonal_periods': 7, 'damped_trend': dm})
+                for sp in (7, 14):  # שבועי / דו-שבועי
+                    configs.append({'trend': tr, 'seasonal': 'add', 'seasonal_periods': sp, 'damped_trend': dm})
 
-    best_cfg, best_score = None, float('inf')
+    best_cfg, best_score = None, np.inf
 
     for cfg in configs:
         try:
-            # set use_boxcox ONLY at init
             m = ExponentialSmoothing(
                 train,
                 trend=cfg['trend'],
@@ -546,13 +579,16 @@ def build_exponential_smoothing_model(df_product):
             ).fit(optimized=True, use_brute=True, remove_bias=True)
 
             fc = np.maximum(m.forecast(val_h), 0.0)
-            score = mean_squared_error(valid, fc)
+            # selection by WAPE (ignoring stockouts if mask exists)
+            score = _wape(valid.values, fc, mask=stock_mask)
+            if not np.isfinite(score):  # אם מדד לא תקין – נפילה ל-RMSE
+                score = (mean_squared_error(valid, fc)) ** 0.5
             if score < best_score:
                 best_score, best_cfg = score, cfg
         except Exception:
             continue
 
-    # refit on FULL series with chosen config (or SES fallback)
+    # ---------- refit on FULL series with chosen config / fallback ----------
     if best_cfg is None:
         m = ExponentialSmoothing(
             s, trend=None, seasonal=None, damped_trend=False,
@@ -572,7 +608,7 @@ def build_exponential_smoothing_model(df_product):
     fitted = np.maximum(m.fittedvalues, 0.0)
     mae = mean_absolute_error(s, fitted)
     rmse = (mean_squared_error(s, fitted)) ** 0.5
-    mape = calculate_mape(s.values, fitted.values)
+    mape = _safe_mape(s.values, fitted.values)
     return m, mae, rmse, mape
 
 
