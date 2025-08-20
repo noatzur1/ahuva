@@ -479,13 +479,14 @@ def build_exponential_smoothing_model(df_product):
         
     except:
         # Fall back to simple exponential smoothing
-        model = ExponentialSmoothing(sales_series, trend='add').fit()
-        fitted_values = model.fittedvalues
-        mae = mean_absolute_error(sales_series, fitted_values)
-        rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-        r2 = 
-        
-        return model, mae, rmse, r2
+     model = ExponentialSmoothing(sales_series, trend='add').fit()
+    fitted_values = model.fittedvalues
+    mae = mean_absolute_error(sales_series, fitted_values)
+    rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
+    mape = calculate_mape(sales_series, fitted_values)
+
+return model, mae, rmse, mape
+
 
 # ========== Navigation ==========
 st.sidebar.markdown("<h2 class='sidebar-title'>Navigation</h2>", unsafe_allow_html=True)
