@@ -473,7 +473,7 @@ def build_exponential_smoothing_model(df_product):
         fitted_values = model.fittedvalues
         mae = mean_absolute_error(sales_series, fitted_values)
         rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-        r2 = 
+        mape = calculate_mape(sales_series, fitted_values)
         
         return model, mae, rmse, r2
         
