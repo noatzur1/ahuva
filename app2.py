@@ -16,7 +16,7 @@ warnings.filterwarnings('ignore')
 
 # ========== Page Configuration ==========
 st.set_page_config(
-    page_title='Ahva Analytics Platform', 
+    page_title="Ahva Dashboard", 
     layout="wide",
     initial_sidebar_state="expanded",
     page_icon="📦"
@@ -25,7 +25,6 @@ st.set_page_config(
 # ========== CSS Styling ==========
 st.markdown("""
 <style>
-
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     * {
@@ -238,10 +237,8 @@ st.markdown("""
             font-size: 2rem;
         }
     }
-
 </style>
 """, unsafe_allow_html=True)
-
 
 # ========== Column Mapping ==========
 COLUMN_MAPPING = {
@@ -486,7 +483,7 @@ def build_exponential_smoothing_model(df_product):
 
 # ========== Navigation ==========
 st.sidebar.markdown("<h2 class='sidebar-title'>Navigation</h2>", unsafe_allow_html=True)
-page = st.sidebar.radio("Go to:", ["Dashboard", "Sales Analysis", "Seasonality Analysis", "Sales Forecasting"])
+page = st.sidebar.radio("Go to:", ["HOME", "Analysis", "Seasonality", "Forecasting"])
 
 # ========== Session State ==========
 if "df" not in st.session_state:
