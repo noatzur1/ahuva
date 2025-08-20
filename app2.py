@@ -447,9 +447,9 @@ def build_random_forest_model(df_forecast):
     y_pred = model.predict(X_test)
     mae = mean_absolute_error(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
+    mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
     
-    return model, available_features, mae, rmse
+    return model, available_features, mae, rmse, mape, mape
 
 def build_exponential_smoothing_model(df_product):
     """Build Exponential Smoothing model for low variability products"""
@@ -474,9 +474,9 @@ def build_exponential_smoothing_model(df_product):
         fitted_values = model.fittedvalues
         mae = mean_absolute_error(sales_series, fitted_values)
         rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
+        mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
         
-        return model, mae, rmse
+        return model, mae, rmse, mape, mape
         
     except:
         # Fall back to simple exponential smoothing
@@ -484,9 +484,9 @@ mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred i
         fitted_values = model.fittedvalues
         mae = mean_absolute_error(sales_series, fitted_values)
         rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
+        mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
         
-        return model, mae, rmse
+        return model, mae, rmse, mape, mape
 
 # ========== Navigation ==========
 st.sidebar.markdown("<h2 class='sidebar-title'>Navigation</h2>", unsafe_allow_html=True)
