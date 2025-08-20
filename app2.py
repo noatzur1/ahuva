@@ -1309,10 +1309,6 @@ if st.session_state.df_clean is not None:
             mime="text/csv"
         )
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Ahva Dashboard v2.1**")
-st.sidebar.markdown("*Enhanced ML Platform*")
-st.sidebar.markdown("Built with Streamlit & scikit-learn")
 
 if st.session_state.df_clean is not None:
     st.sidebar.success("Enhanced Dashboard Ready!")
