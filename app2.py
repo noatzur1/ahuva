@@ -3,6 +3,13 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+
+
+def calculate_mape(actual, predicted):
+    actual, predicted = np.array(actual), np.array(predicted)
+    mask = actual != 0
+    return (np.fabs((actual - predicted)/actual)[mask].mean()) * 100 if mask.any() else np.nan
+
 from datetime import datetime, timedelta
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -440,7 +447,7 @@ def build_random_forest_model(df_forecast):
     y_pred = model.predict(X_test)
     mae = mean_absolute_error(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    r2 = r2_score(y_test, y_pred)
+    r2 = 
     
     return model, available_features, mae, rmse, r2
 
@@ -467,7 +474,7 @@ def build_exponential_smoothing_model(df_product):
         fitted_values = model.fittedvalues
         mae = mean_absolute_error(sales_series, fitted_values)
         rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-        r2 = r2_score(sales_series, fitted_values)
+        r2 = 
         
         return model, mae, rmse, r2
         
@@ -477,7 +484,7 @@ def build_exponential_smoothing_model(df_product):
         fitted_values = model.fittedvalues
         mae = mean_absolute_error(sales_series, fitted_values)
         rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-        r2 = r2_score(sales_series, fitted_values)
+        r2 = 
         
         return model, mae, rmse, r2
 
@@ -861,8 +868,8 @@ elif page == "Forecasting":
                                 st.metric("R² Score", f"{r2:.3f}", help="Explained Variance")
                             with col4:
                                 avg_sales = product_data['UnitsSold'].mean()
-                                accuracy_pct = max(0, (1 - mae/avg_sales) * 100) if avg_sales > 0 else 0
-                                st.metric("Accuracy", f"{accuracy_pct:.1f}%", help="Prediction Accuracy")
+                                MAPE_pct = max(0, (1 - mae/avg_sales) * 100) if avg_sales > 0 else 0
+                                st.metric("MAPE", f"{MAPE_pct:.1f}%", help="Prediction MAPE")
                             
                         except Exception as e:
                             st.error(f"Exponential Smoothing failed: {str(e)}")
@@ -928,8 +935,8 @@ elif page == "Forecasting":
                                 st.metric("R² Score", f"{r2:.3f}", help="Explained Variance")
                             with col4:
                                 avg_sales = df['UnitsSold'].mean()
-                                accuracy_pct = max(0, (1 - mae/avg_sales) * 100)
-                                st.metric("Accuracy", f"{accuracy_pct:.1f}%", help="Prediction Accuracy")
+                                MAPE_pct = max(0, (1 - mae/avg_sales) * 100)
+                                st.metric("MAPE", f"{MAPE_pct:.1f}%", help="Prediction MAPE")
                             
                         except Exception as e:
                             st.error(f"Random Forest failed: {str(e)}")
