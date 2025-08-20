@@ -1300,4 +1300,60 @@ elif page == "Forecasting":
                         st.write("Add price information to enable revenue calculations")
 
                     # FORECAST CHART ONLY
-                    st.markdown("###
+                    st.markdown("### 14-Day Forecast Chart")
+
+                    fig = go.Figure()
+
+                    # ONLY forecast data
+                    fig.add_trace(go.Scatter(
+                        x=future_df['Date'],
+                        y=future_df['Predicted_Sales'],
+                        mode='lines+markers',
+                        name='14-Day Forecast',
+                        line=dict(color='#1f77b4', width=3),
+                        marker=dict(size=6, color='#1f77b4')
+                    ))
+
+                    # Clean layout
+                    fig.update_layout(
+                        title=f'Sales Forecast: {selected_product}',
+                        xaxis_title='Date',
+                        yaxis_title='Predicted Units',
+                        height=400,
+                        showlegend=False
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"Error generating forecast: {str(e)}")
+                    st.write("**Debug Info:**")
+                    st.write(f"- Product: {selected_product}")
+                    st.write(f"- Data points: {len(product_data)}")
+                    st.write(f"- Date range: {product_data['Date'].min()} to {product_data['Date'].max()}")
+
+    else:
+        st.warning("Please upload and clean your data in the HOME page first.")
+
+# ========== Sidebar ==========
+st.sidebar.markdown("---")
+st.sidebar.subheader("Data Tools")
+
+if st.session_state.df_clean is not None:
+    if st.sidebar.button("Export Data"):
+        csv = st.session_state.df_clean.to_csv(index=False)
+        st.sidebar.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=f"ahva_data_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Ahva Dashboard v2.1**")
+st.sidebar.markdown("*Enhanced ML Platform*")
+st.sidebar.markdown("Built with Streamlit & scikit-learn")
+
+if st.session_state.df_clean is not None:
+    st.sidebar.success("Enhanced Dashboard Ready!")
+    st.sidebar.info("ML Forecasting Active")
