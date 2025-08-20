@@ -1310,6 +1310,4 @@ if st.session_state.df_clean is not None:
         )
 
 
-if st.session_state.df_clean is not None:
-    st.sidebar.success("Enhanced Dashboard Ready!")
-    st.sidebar.info("ML Forecasting Active")
+
