@@ -705,30 +705,6 @@ if page == "HOME":
 
 # ========== ANALYSIS PAGE ==========
 elif page == "Analysis":
-       ...
-    # Time-based analysis
-    if 'Date' in df.columns and not df['Date'].isna().all():
-        st.markdown("---")
-        st.subheader("Sales Trends Over Time")
-
-        daily_sales = df.groupby('Date')['UnitsSold'].sum().reset_index()
-        # ← הוספתי כאן:
-        daily_sales['MA7'] = daily_sales['UnitsSold'].rolling(7, min_periods=1).mean()
-
-        fig_trend = px.line(
-            daily_sales,
-            x='Date',
-            y='UnitsSold',
-            title='Daily Sales Trend',
-            labels={'UnitsSold': 'Units Sold'}
-        )
-        # ← הוספתי כאן:
-        fig_trend.add_scatter(x=daily_sales['Date'], y=daily_sales['MA7'],
-                              name='MA7 (7-day average)', mode='lines',
-                              line=dict(dash='dash'))
-        fig_trend.update_layout(showlegend=True)
-        fig_trend.update_traces(line_color='#1f77b4', line_width=3)
-        ...
     st.markdown("<h1>Sales & Demand Analysis</h1><hr>", unsafe_allow_html=True)
 
     if st.session_state.df_clean is not None:
