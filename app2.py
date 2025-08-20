@@ -449,7 +449,7 @@ def build_random_forest_model(df_forecast):
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
 mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
     
-    return model, available_features, mae, rmse, r2
+    return model, available_features, mae, rmse
 
 def build_exponential_smoothing_model(df_product):
     """Build Exponential Smoothing model for low variability products"""
@@ -476,7 +476,7 @@ def build_exponential_smoothing_model(df_product):
         rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
 mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
         
-        return model, mae, rmse, r2
+        return model, mae, rmse
         
     except:
         # Fall back to simple exponential smoothing
@@ -486,7 +486,7 @@ mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred i
         rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
 mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
         
-        return model, mae, rmse, r2
+        return model, mae, rmse
 
 # ========== Navigation ==========
 st.sidebar.markdown("<h2 class='sidebar-title'>Navigation</h2>", unsafe_allow_html=True)
