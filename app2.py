@@ -1,1313 +1,807 @@
-import streamlit as st
+# Complete Demand Forecasting System
+# Academic-Grade Time Series Forecasting for Inventory Management
+# ================================================================
+
+# Import required libraries
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
+import seaborn as sns
+from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
-# ========== Page Configuration ==========
-st.set_page_config(
-    page_title="Ahva Analytics Platform",
-    layout="wide",
-    initial_sidebar_state="expanded",
-    
+# Statistical modeling libraries
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+
+# Machine learning libraries
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import xgboost as xgb
+
+# Install required packages
+# !pip install xgboost statsmodels -q
+
+# Visualization settings
+plt.rcParams['figure.figsize'] = (12, 8)
+plt.rcParams['font.size'] = 10
+sns.set_style("whitegrid")
+
+# ================================================================
+# PHASE 1: DATA LOADING AND INITIAL EXPLORATION
+# ================================================================
+
+print("Loading dataset...")
+df = pd.read_csv('ahuva_datase מאוחד חדש.csv', encoding='utf-8')
+
+print(f"Dataset loaded: {len(df)} rows, {len(df.columns)} columns")
+print("Columns:", list(df.columns))
+print("\nDataset info:")
+print(df.info())
+print("\nFirst 5 rows:")
+print(df.head())
+
+# ================================================================
+# PHASE 2: DATA CLEANING AND PREPROCESSING
+# ================================================================
+
+print("\n" + "="*60)
+print("DATA CLEANING AND PREPROCESSING")
+print("="*60)
+
+# Convert date column
+df['תאריך'] = pd.to_datetime(df['תאריך'])
+
+# Check for missing values
+missing_summary = df.isnull().sum()
+print("Missing values by column:")
+print(missing_summary[missing_summary > 0])
+
+# Fill missing values for core variables
+df['כמות שנמכרה'].fillna(0, inplace=True)
+df['כמות במלאי'].fillna(0, inplace=True)
+
+# Handle negative values
+negative_sales = (df['כמות שנמכרה'] < 0).sum()
+negative_inventory = (df['כמות במלאי'] < 0).sum()
+
+if negative_sales > 0:
+    print(f"Fixed {negative_sales} negative sales values")
+    df['כמות שנמכרה'] = df['כמות שנמכרה'].clip(lower=0)
+
+if negative_inventory > 0:
+    print(f"Fixed {negative_inventory} negative inventory values")
+    df['כמות במלאי'] = df['כמות במלאי'].clip(lower=0)
+
+# Basic statistics
+print("\nDescriptive statistics:")
+print(df[['כמות שנמכרה', 'כמות במלאי', 'מהירות חידוש מלאי (ימים)']].describe())
+
+# Dataset overview
+print(f"\nDataset overview:")
+print(f"Total rows: {len(df):,}")
+print(f"Unique SKUs: {df['מקט'].nunique():,}")
+print(f"Categories: {df['קטגוריה'].nunique()}")
+print(f"Date range: {df['תאריך'].min().date()} to {df['תאריך'].max().date()}")
+
+# ================================================================
+# PHASE 3: HANDLE MISSING VALUES INTELLIGENTLY
+# ================================================================
+
+print("\n" + "="*60)
+print("INTELLIGENT MISSING VALUE HANDLING")
+print("="*60)
+
+# Handle missing categories and descriptions by SKU
+print("Handling missing categories and descriptions...")
+
+# Category mapping per SKU
+category_mapping = df.groupby('מקט')['קטגוריה'].apply(
+    lambda x: x.dropna().iloc[0] if not x.dropna().empty else None
 )
 
-# ========== CSS Styling ==
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+df['קטגוריה'] = df.apply(
+    lambda row: category_mapping[row['מקט']] if pd.isnull(row['קטגוריה']) and row['מקט'] in category_mapping else row['קטגוריה'],
+    axis=1
+)
 
-    * {
-        font-family: 'Inter', sans-serif;
+# Description mapping per SKU
+description_mapping = df.groupby('מקט')['תיאור מוצר'].apply(
+    lambda x: x.dropna().iloc[0] if not x.dropna().empty else None
+)
+
+df['תיאור מוצר'] = df.apply(
+    lambda row: description_mapping[row['מקט']] if pd.isnull(row['תיאור מוצר']) and row['מקט'] in description_mapping else row['תיאור מוצר'],
+    axis=1
+)
+
+print("Category and description missing values handled")
+
+# Derive time features from date
+print("Deriving time features from date...")
+
+df['יום בשבוע'] = df['יום בשבוע'].fillna(df['תאריך'].dt.dayofweek)
+df['חודש'] = df['חודש'].fillna(df['תאריך'].dt.month)
+df['שבוע בשנה'] = df['שבוע בשנה'].fillna(df['תאריך'].dt.isocalendar().week)
+
+# Handle inventory turnover speed
+print("Handling inventory turnover speed...")
+
+inventory_speed_mapping = df.groupby('מקט')['מהירות חידוש מלאי (ימים)'].apply(
+    lambda x: x.dropna().mean() if not x.dropna().empty else None
+)
+
+df['מהירות חידוש מלאי (ימים)'] = df.apply(
+    lambda row: inventory_speed_mapping[row['מקט']]
+    if pd.isnull(row['מהירות חידוש מלאי (ימים)']) and row['מקט'] in inventory_speed_mapping
+    else row['מהירות חידוש מלאי (ימים)'],
+    axis=1
+)
+
+# Fill remaining missing values with overall mean
+overall_mean_speed = df['מהירות חידוש מלאי (ימים)'].mean()
+df['מהירות חידוש מלאי (ימים)'].fillna(overall_mean_speed, inplace=True)
+
+# Final missing value check
+missing_final = df.isnull().sum()
+remaining_missing = missing_final[missing_final > 0]
+
+if len(remaining_missing) == 0:
+    print("All missing values handled successfully")
+else:
+    print("Remaining missing values:")
+    print(remaining_missing)
+
+# ================================================================
+# PHASE 4: CHECK AND HANDLE DUPLICATES
+# ================================================================
+
+print("\n" + "="*60)
+print("DUPLICATE DETECTION AND AGGREGATION")
+print("="*60)
+
+# Check for SKU-date duplicates
+duplicate_check = df.groupby(['מקט', 'תאריך']).size()
+duplicates = duplicate_check[duplicate_check > 1]
+
+print(f"Total records: {len(df):,}")
+print(f"Unique SKU-date combinations: {len(duplicate_check):,}")
+print(f"Duplicates found: {len(duplicates)}")
+
+if len(duplicates) > 0:
+    print("Aggregating duplicate records...")
+
+    # Define aggregation strategy
+    aggregation_dict = {
+        'תיאור מוצר': 'first',
+        'קטגוריה': 'first',
+        'כמות במלאי': 'mean',
+        'כמות שנמכרה': 'sum',
+        'מהירות חידוש מלאי (ימים)': 'mean',
+        'יום בשבוע': 'first',
+        'חודש': 'first',
+        'שבוע בשנה': 'first'
     }
 
-    .main > div {
-        padding-top: 1.5rem;
-        background: #fafbfc;
-    }
+    print(f"Before aggregation: {len(df)} rows")
 
-    .stSelectbox > div > div {
-        background: white;
-        border: 1px solid #e1e5e9;
-        border-radius: 8px;
-    }
+    # Perform aggregation
+    df = df.groupby(['מקט', 'תאריך']).agg(aggregation_dict).reset_index()
 
-    .stButton > button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 0.5rem 2rem;
-        font-weight: 600;
-        transition: all 0.3s ease;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
+    print(f"After aggregation: {len(df)} rows")
+    print(f"Removed {len(df)} duplicate records")
 
-    .stButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    }
+    # Verify no more duplicates
+    final_duplicate_check = df.groupby(['מקט', 'תאריך']).size()
+    remaining_duplicates = final_duplicate_check[final_duplicate_check > 1]
 
-    .kpi-container {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 1.5rem;
-        margin: 2rem 0;
-    }
+    if len(remaining_duplicates) == 0:
+        print("Duplicate aggregation successful")
+    else:
+        print(f"Warning: {len(remaining_duplicates)} duplicates still exist")
 
-    .kpi-card {
-        background: white;
-        border: 1px solid #e1e5e9;
-        border-radius: 12px;
-        padding: 1.5rem;
-        text-align: center;
-        transition: all 0.3s ease;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        position: relative;
-        overflow: hidden;
-    }
+# ================================================================
+# PHASE 5: FEATURE ENGINEERING
+# ================================================================
 
-    .kpi-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 4px;
-        background: linear-gradient(90deg, #667eea, #764ba2);
-    }
+print("\n" + "="*60)
+print("FEATURE ENGINEERING")
+print("="*60)
 
-    .kpi-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
-        border-color: #667eea;
-    }
+# Sort data chronologically
+df = df.sort_values(['מקט', 'תאריך']).reset_index(drop=True)
 
-    .kpi-title {
-        font-size: 0.875rem;
-        color: #6c757d;
-        margin-bottom: 0.5rem;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
+print("Creating lag features...")
 
-    .kpi-value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #2c3e50;
-        margin: 0.5rem 0;
-        line-height: 1;
-    }
+# Lag features (using previous periods to avoid data leakage)
+df['sales_lag1'] = df.groupby('מקט')['כמות שנמכרה'].shift(1)
+df['sales_lag7'] = df.groupby('מקט')['כמות שנמכרה'].shift(7)
 
-    .kpi-subtext {
-        font-size: 0.75rem;
-        color: #95a5a6;
-        font-weight: 500;
-    }
+# Moving averages (using previous periods only)
+df['sales_ma7_lag'] = df.groupby('מקט')['sales_lag1'].rolling(window=7, min_periods=1).mean().reset_index(0, drop=True)
 
-    .sidebar-title {
-        color: #2c3e50;
-        margin-bottom: 1.5rem;
-        font-weight: 700;
-        text-align: center;
-        font-size: 1.25rem;
-    }
+# Calculated features (avoiding data leakage)
+df['inventory_sales_ratio_lag'] = df.groupby('מקט')['sales_lag1'].shift(0) / (df.groupby('מקט')['כמות במלאי'].shift(1) + 1)
+df['sales_change'] = df.groupby('מקט')['כמות שנמכרה'].pct_change().shift(1).fillna(0)
 
-    h1, h2, h3 {
-        color: #2c3e50;
-        font-weight: 700;
-        margin-bottom: 1rem;
-    }
+# Feature summary
+original_columns = ['מקט', 'תאריך', 'תיאור מוצר', 'קטגוריה', 'כמות במלאי', 'כמות שנמכרה',
+                   'מהירות חידוש מלאי (ימים)', 'יום בשבוע', 'חודש', 'שבוע בשנה']
 
-    h1 {
-        font-size: 2.5rem;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
+new_features = [col for col in df.columns if col not in original_columns]
 
-    .page-subtitle {
-        text-align: center;
-        color: #6c757d;
-        font-size: 1.125rem;
-        margin-bottom: 2rem;
-        font-weight: 500;
-    }
+print(f"Created {len(new_features)} new features:")
+for i, feature in enumerate(new_features, 1):
+    print(f"{i}. {feature}")
 
-    hr {
-        margin: 2rem 0;
-        border: none;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, #e1e5e9, transparent);
-    }
+# Check feature quality
+print("\nFeature quality check:")
+for feature in new_features:
+    missing_count = df[feature].isnull().sum()
+    missing_pct = (missing_count / len(df)) * 100
+    print(f"{feature}: {missing_count} missing ({missing_pct:.1f}%)")
 
-    .alert-box {
-        padding: 1rem 1.5rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-        border-left: 4px solid;
-        background: white;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
+# ================================================================
+# PHASE 6: DEMAND STABILITY CLASSIFICATION
+# ================================================================
 
-    .alert-success {
-        border-left-color: #28a745;
-        background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-        color: #155724;
-    }
+print("\n" + "="*60)
+print("DEMAND STABILITY CLASSIFICATION")
+print("="*60)
 
-    .alert-warning {
-        border-left-color: #ffc107;
-        background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-        color: #856404;
-    }
+print("Calculating coefficient of variation (CV) for each SKU...")
 
-    .alert-danger {
-        border-left-color: #dc3545;
-        background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-        color: #721c24;
-    }
+# Calculate statistics per SKU
+product_stats = df.groupby('מקט')['כמות שנמכרה'].agg([
+    'mean', 'std', 'count'
+]).reset_index()
 
-    .alert-info {
-        border-left-color: #17a2b8;
-        background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
-        color: #0c5460;
-    }
+# Calculate CV
+product_stats['cv'] = product_stats['std'] / (product_stats['mean'] + 1e-8)
 
-    .section-header {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: #2c3e50;
-        margin-bottom: 1rem;
-        padding-bottom: 0.5rem;
-        border-bottom: 2px solid #e1e5e9;
-    }
+# Filter products with sufficient observations
+product_stats = product_stats[product_stats['count'] >= 10].reset_index(drop=True)
 
-    .upload-area {
-        border: 2px dashed #e1e5e9;
-        border-radius: 12px;
-        padding: 3rem;
-        text-align: center;
-        background: white;
-        transition: all 0.3s ease;
-    }
+print(f"Products with sufficient data: {len(product_stats)} out of {df['מקט'].nunique()}")
 
-    .upload-area:hover {
-        border-color: #667eea;
-        background: #f8f9ff;
-    }
+# Set CV threshold based on median
+cv_threshold = product_stats['cv'].median()
+print(f"CV threshold selected: {cv_threshold:.3f} (median)")
 
-    .status-badge {
-        display: inline-block;
-        padding: 0.25rem 0.75rem;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
+# Classify products
+product_stats['demand_group'] = product_stats['cv'].apply(
+    lambda x: 'stable' if x <= cv_threshold else 'volatile'
+)
 
-    .badge-success {
-        background: #d4edda;
-        color: #155724;
-    }
+# Summary of classification
+demand_groups = product_stats['demand_group'].value_counts()
+print("Product classification:")
+for group, count in demand_groups.items():
+    print(f"{group} demand: {count} products ({count/len(product_stats)*100:.1f}%)")
 
-    @media (max-width: 768px) {
-        .kpi-container {
-            grid-template-columns: 1fr;
-        }
-        .kpi-value {
-            font-size: 1.75rem;
-        }
-        h1 {
-            font-size: 2rem;
-        }
-    }
-</style>
-""", unsafe_allow_html=True)
+# Statistics by group
+print("\nStatistics by demand group:")
+for group in ['stable', 'volatile']:
+    group_data = product_stats[product_stats['demand_group'] == group]
+    if len(group_data) > 0:
+        print(f"\n{group} demand:")
+        print(f"  Average CV: {group_data['cv'].mean():.3f}")
+        print(f"  Average sales: {group_data['mean'].mean():.2f}")
+        print(f"  CV range: {group_data['cv'].min():.3f} - {group_data['cv'].max():.3f}")
 
+# Add classification to main dataset
+df = df.merge(product_stats[['מקט', 'demand_group']], on='מקט', how='left')
 
+# Remove records without classification
+missing_classification = df['demand_group'].isnull().sum()
+if missing_classification > 0:
+    print(f"Removing {missing_classification} records without classification")
+    df = df.dropna(subset=['demand_group']).reset_index(drop=True)
+    print(f"Remaining records: {len(df)}")
 
-# ========== Column Mapping ==========
-COLUMN_MAPPING = {
-    'מקט': 'SKU',
-    'תיאור מוצר': 'Product',
-    'קטגוריה': 'Category',
-    'תאריך': 'Date',
-    'כמות במלאי': 'Stock',
-    'כמות שנמכרה': 'UnitsSold',
-    'מהירות חידוש מלאי (ימים)': 'RestockSpeedDays',
-    'יום בשבוע': 'DayOfWeek',
-    'חודש': 'Month',
-    'שבוע בשנה': 'WeekOfYear'
-}
+# Final classification distribution
+final_split = df['demand_group'].value_counts()
+print("\nFinal data distribution:")
+for group, count in final_split.items():
+    print(f"{group} demand: {count} records")
 
-# ========== Enhanced Data Cleaning Functions ==========
-@st.cache_data
-def clean_data(df):
-    """Data cleaning and preparation"""
-    df_clean = df.copy()
+# ================================================================
+# PHASE 7: CHRONOLOGICAL TRAIN-TEST SPLIT
+# ================================================================
 
-    # Rename columns from Hebrew to English
-    df_clean = df_clean.rename(columns=COLUMN_MAPPING)
+print("\n" + "="*60)
+print("CHRONOLOGICAL TRAIN-TEST SPLIT")
+print("="*60)
 
-    # Handle dates
-    if 'Date' in df_clean.columns:
-        def convert_date(date_val):
-            if pd.isna(date_val):
-                return pd.NaT
+# Sort by date
+df = df.sort_values(['מקט', 'תאריך']).reset_index(drop=True)
 
-            if isinstance(date_val, (int, float)) and not pd.isna(date_val):
-                try:
-                    if 1 <= date_val <= 100000:
-                        base_date = pd.to_datetime('1899-12-30')
-                        return base_date + pd.Timedelta(days=int(date_val))
-                except:
-                    pass
+# Calculate date range
+min_date = df['תאריך'].min()
+max_date = df['תאריך'].max()
+total_days = (max_date - min_date).days
 
-            try:
-                converted = pd.to_datetime(date_val, errors='coerce', dayfirst=True)
-                if pd.isna(converted):
-                    return pd.NaT
-                current_year = datetime.now().year
-                if 2000 <= converted.year <= current_year + 1:
-                    return converted
-                else:
-                    return pd.NaT
-            except:
-                return pd.NaT
+print(f"Date range: {min_date.date()} to {max_date.date()}")
+print(f"Total days: {total_days}")
 
-        df_clean['Date'] = df_clean['Date'].apply(convert_date)
+# Chronological split - 80% train, 20% test
+split_ratio = 0.8
+split_date = min_date + pd.Timedelta(days=int(total_days * split_ratio))
 
-        invalid_dates = df_clean['Date'].isna().sum()
-        if invalid_dates > 0:
-            df_clean = df_clean.dropna(subset=['Date'])
-            st.info(f"Removed {invalid_dates} rows with invalid dates")
+print(f"Split date: {split_date.date()}")
 
-    # Standardize categories
-    if 'Category' in df_clean.columns:
-        category_mapping = {
-            'חלווה': 'Halva', 'חלוה': 'Halva', 'halva': 'Halva', 'HALVA': 'Halva',
-            'טחינה': 'Tahini', 'TAHINI': 'Tahini', 'tahini': 'Tahini',
-            'חטיפים': 'Snacks', 'SNACKS': 'Snacks', 'snacks': 'Snacks',
-            'עוגות': 'Cakes', 'CAKES': 'Cakes', 'cakes': 'Cakes',
-            'עוגיות': 'Cookies', 'COOKIES': 'Cookies', 'cookies': 'Cookies',
-            'מאפים': 'Pastries', 'PASTRIES': 'Pastries', 'pastries': 'Pastries',
-            'סירופ': 'Syrup', 'SYRUP': 'Syrup', 'syrup': 'Syrup'
-        }
-        df_clean['Category'] = df_clean['Category'].replace(category_mapping).str.title()
+# Create train and test sets
+train_data = df[df['תאריך'] < split_date].copy()
+test_data = df[df['תאריך'] >= split_date].copy()
 
-    # Remove rows with missing critical data
-    critical_columns = [col for col in ['Product', 'Category', 'UnitsSold', 'Stock'] if col in df_clean.columns]
-    before_cleaning = len(df_clean)
-    df_clean = df_clean.dropna(subset=critical_columns)
-    after_cleaning = len(df_clean)
+print(f"\nData split:")
+print(f"Training: {len(train_data):,} records ({len(train_data)/len(df)*100:.1f}%)")
+print(f"Testing: {len(test_data):,} records ({len(test_data)/len(df)*100:.1f}%)")
 
-    if before_cleaning != after_cleaning:
-        st.info(f"Data Cleaning: Removed {before_cleaning - after_cleaning} rows with missing critical data")
+# Check SKU coverage
+items_in_train = set(train_data['מקט'].unique())
+items_in_test = set(test_data['מקט'].unique())
+items_in_both = items_in_train.intersection(items_in_test)
 
-    # Handle numeric columns
-    numeric_columns = ['UnitsSold', 'Stock', 'RestockSpeedDays', 'DayOfWeek', 'Month', 'WeekOfYear']
-    for col in numeric_columns:
-        if col in df_clean.columns:
-            df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
-            negative_count = (df_clean[col] < 0).sum()
-            if negative_count > 0:
-                df_clean[col] = df_clean[col].abs()
+print(f"\nSKU coverage check:")
+print(f"SKUs in both sets: {len(items_in_both)}")
+print(f"SKUs only in training: {len(items_in_train - items_in_test)}")
+print(f"SKUs only in testing: {len(items_in_test - items_in_train)}")
 
-            if col in ['UnitsSold', 'Stock']:
-                Q1 = df_clean[col].quantile(0.25)
-                Q3 = df_clean[col].quantile(0.75)
-                IQR = Q3 - Q1
-                lower_bound = Q1 - 3 * IQR
-                upper_bound = Q3 + 3 * IQR
-                extreme_high = df_clean[col] > upper_bound
-                if extreme_high.sum() > 0:
-                    df_clean.loc[extreme_high, col] = upper_bound
+# Distribution by demand group
+print("\nDistribution by demand group:")
+for dataset_name, dataset in [('Training', train_data), ('Testing', test_data)]:
+    demand_split = dataset['demand_group'].value_counts()
+    print(f"\n{dataset_name}:")
+    for group, count in demand_split.items():
+        print(f"  {group} demand: {count:,} records")
 
-    if 'Category' in df_clean.columns:
-        unique_categories = sorted(df_clean['Category'].unique())
-        st.success(f"Categories standardized: {', '.join(unique_categories)}")
+# Date range verification
+print(f"\nDate ranges:")
+print(f"Training: {train_data['תאריך'].min().date()} to {train_data['תאריך'].max().date()}")
+print(f"Testing: {test_data['תאריך'].min().date()} to {test_data['תאריך'].max().date()}")
 
-    return df_clean
+# Verify no temporal overlap
+if train_data['תאריך'].max() >= test_data['תאריך'].min():
+    print("Warning: Temporal overlap detected")
+else:
+    print("No temporal overlap - split is correct")
 
-@st.cache_data
-def prepare_forecast_data_enhanced(df):
-    """Prepare data for forecasting"""
-    if len(df) == 0:
-        return df
+# ================================================================
+# PHASE 8: OUTLIER TREATMENT AND MODEL IMPROVEMENT
+# ================================================================
 
-    df_forecast = df.copy()
-    df_forecast = df_forecast.dropna(subset=['Date'])
-    df_forecast = df_forecast.sort_values('Date')
+print("\n" + "="*60)
+print("OUTLIER TREATMENT AND DATA IMPROVEMENT")
+print("="*60)
 
-    # Time features
-    df_forecast['Year'] = df_forecast['Date'].dt.year
-    df_forecast['Month'] = df_forecast['Date'].dt.month
-    df_forecast['DayOfWeek'] = df_forecast['Date'].dt.dayofweek
-    df_forecast['WeekOfYear'] = df_forecast['Date'].dt.isocalendar().week
-    df_forecast['Quarter'] = df_forecast['Date'].dt.quarter
-    df_forecast['DayOfMonth'] = df_forecast['Date'].dt.day
-    df_forecast['IsWeekend'] = df_forecast['DayOfWeek'].isin([5, 6]).astype(int)
-    df_forecast['IsMonthStart'] = df_forecast['Date'].dt.is_month_start.astype(int)
-    df_forecast['IsMonthEnd'] = df_forecast['Date'].dt.is_month_end.astype(int)
+# Create working copy
+df_improved = df.copy()
 
-    # Product features
-    df_forecast['Product_encoded'] = pd.Categorical(df_forecast['Product']).codes
-    df_forecast['Category_encoded'] = pd.Categorical(df_forecast['Category']).codes
+# Outlier treatment using IQR method
+def cap_outliers(series, factor=2.0):
+    Q1 = series.quantile(0.25)
+    Q3 = series.quantile(0.75)
+    IQR = Q3 - Q1
+    upper_bound = Q3 + factor * IQR
+    lower_bound = Q1 - factor * IQR
+    return series.clip(lower=lower_bound, upper=upper_bound)
 
-    # Historical sales features
-    df_forecast = df_forecast.sort_values(['Product', 'Date'])
+print("Treating outliers in sales data...")
 
-    for window in [3, 7, 14, 30]:
-        df_forecast[f'Sales_MA_{window}'] = df_forecast.groupby('Product')['UnitsSold'].transform(
-            lambda x: x.rolling(window=min(window, len(x)), min_periods=1).mean()
-        )
+# Apply outlier capping by SKU
+df_improved['sales_corrected'] = df_improved.groupby('מקט')['כמות שנמכרה'].transform(
+    lambda x: cap_outliers(x, factor=2.0)
+)
 
-    df_forecast['Sales_Trend_7'] = df_forecast.groupby('Product')['UnitsSold'].transform(
-        lambda x: x.rolling(window=min(7, len(x)), min_periods=2).apply(
-            lambda vals: np.polyfit(range(len(vals)), vals, 1)[0] if len(vals) > 1 else 0, raw=False
-        )
-    )
+# Compare before and after
+print(f"Before correction - max sales: {df['כמות שנמכרה'].max():.0f}")
+print(f"After correction - max sales: {df_improved['sales_corrected'].max():.0f}")
 
-    df_forecast['Stock_Sales_Ratio'] = df_forecast['Stock'] / (df_forecast['UnitsSold'] + 1)
+# Reclassify with corrected data
+print("Reclassifying products with corrected data...")
 
-    category_avg = df_forecast.groupby('Category')['UnitsSold'].transform('mean')
-    df_forecast['Product_vs_Category_Performance'] = df_forecast['UnitsSold'] / (category_avg + 1)
+product_stats_improved = df_improved.groupby('מקט')['sales_corrected'].agg([
+    'mean', 'std', 'count'
+]).reset_index()
 
-    return df_forecast
+product_stats_improved['cv'] = product_stats_improved['std'] / (product_stats_improved['mean'] + 1e-8)
+product_stats_improved = product_stats_improved[product_stats_improved['count'] >= 10]
 
-def calculate_cv(series):
-    """Calculate coefficient of variation"""
-    mean_val = series.mean()
-    std_val = series.std()
-    if mean_val == 0 or pd.isna(mean_val) or pd.isna(std_val):
-        return 0
-    cv = std_val / mean_val
-    return abs(cv)
+# New threshold
+cv_threshold_new = product_stats_improved['cv'].median()
+print(f"New CV threshold: {cv_threshold_new:.3f}")
 
-def calculate_mape(y_true, y_pred):
-    """Calculate Mean Absolute Percentage Error"""
+product_stats_improved['demand_group_new'] = product_stats_improved['cv'].apply(
+    lambda x: 'stable' if x <= cv_threshold_new else 'volatile'
+)
+
+# Add to dataset
+df_improved = df_improved.merge(
+    product_stats_improved[['מקט', 'demand_group_new']],
+    on='מקט', how='left'
+)
+
+# Compare classifications
+print("\nClassification comparison:")
+comparison = pd.crosstab(df_improved['demand_group'], df_improved['demand_group_new'])
+print(comparison)
+
+# Create improved train/test split
+split_date = train_data['תאריך'].max()
+
+train_improved = df_improved[df_improved['תאריך'] <= split_date].copy()
+test_improved = df_improved[df_improved['תאריך'] > split_date].copy()
+
+print(f"\nImproved dataset summary:")
+print(f"Training records: {len(train_improved)}")
+print(f"Testing records: {len(test_improved)}")
+
+# ================================================================
+# PHASE 9: STATISTICAL MODELS FOR STABLE DEMAND
+# ================================================================
+
+print("\n" + "="*60)
+print("STATISTICAL MODELS FOR STABLE DEMAND")
+print("="*60)
+
+# Filter stable demand products
+stable_train = train_improved[train_improved['demand_group_new'] == 'stable'].copy()
+stable_test = test_improved[test_improved['demand_group_new'] == 'stable'].copy()
+
+print(f"Stable demand products in training: {stable_train['מקט'].nunique()}")
+print(f"Training records: {len(stable_train)}")
+print(f"Testing records: {len(stable_test)}")
+
+# Initialize prediction dictionaries
+predictions_ma = {}
+predictions_exp = {}
+predictions_hw = {}
+
+# Model training
+stable_items = stable_train['מקט'].unique()
+successful_models = 0
+
+print("Training statistical models...")
+
+for item_id in stable_items:
+    try:
+        # Get item data
+        item_train = stable_train[stable_train['מקט'] == item_id].sort_values('תאריך')
+        item_test = stable_test[stable_test['מקט'] == item_id].sort_values('תאריך')
+
+        # Skip items with insufficient data
+        if len(item_train) < 10 or len(item_test) == 0:
+            continue
+
+        # Create time series
+        sales_series = item_train.set_index('תאריך')['sales_corrected']
+        forecast_periods = len(item_test)
+
+        # 1. Moving Average
+        window_size = min(7, len(sales_series))
+        ma_value = sales_series.tail(window_size).mean()
+        predictions_ma[item_id] = np.full(forecast_periods, ma_value)
+
+        # 2. Exponential Smoothing
+        try:
+            model_exp = ExponentialSmoothing(sales_series, trend=None, seasonal=None)
+            fit_exp = model_exp.fit()
+            forecast_exp = fit_exp.forecast(steps=forecast_periods)
+            predictions_exp[item_id] = forecast_exp.values
+        except:
+            predictions_exp[item_id] = np.full(forecast_periods, sales_series.mean())
+
+        # 3. Holt-Winters
+        try:
+            if len(sales_series) >= 14:
+                model_hw = ExponentialSmoothing(sales_series, trend='add', seasonal='add', seasonal_periods=7)
+            else:
+                model_hw = ExponentialSmoothing(sales_series, trend='add', seasonal=None)
+            fit_hw = model_hw.fit()
+            forecast_hw = fit_hw.forecast(steps=forecast_periods)
+            predictions_hw[item_id] = forecast_hw.values
+        except:
+            predictions_hw[item_id] = np.full(forecast_periods, sales_series.mean())
+
+        successful_models += 1
+
+    except:
+        continue
+
+print(f"Successfully trained models for {successful_models} stable SKUs")
+
+# ================================================================
+# PHASE 10: MODEL EVALUATION AND COMPARISON
+# ================================================================
+
+print("\n" + "="*60)
+print("MODEL EVALUATION AND COMPARISON")
+print("="*60)
+
+# Evaluation functions
+def calculate_metrics(y_true, y_pred):
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mae = mean_absolute_error(y_true, y_pred)
+
+    # MAPE
     mask = y_true != 0
     if mask.sum() > 0:
         mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
-        return mape
     else:
-        return 0
+        mape = float('inf')
 
-def classify_products_by_cv(df):
-    """Classify products by coefficient of variation - using predefined CV values"""
+    # WAPE
+    if y_true.sum() != 0:
+        wape = np.sum(np.abs(y_true - y_pred)) / np.sum(y_true) * 100
+    else:
+        wape = float('inf')
 
-    # Predefined CV values for each SKU based on analysis - CORRECTED WITH ACTUAL SKUs
-    sku_cv_mapping = {
-        # STABLE GROUP (CV ≤ 0.5) - 14 SKUs
-        16: 0.234,    # טחינה בדלי 18 ק"ג - STABLE
-        13: 0.312,    # טחינה 3 ק"ג - STABLE  
-        10: 0.378,    # טחינה גולמית 500 ג' פלסטיק - STABLE
-        22: 0.456,    # חלוה בלוק 500 ג' וניל - STABLE
-        621: 0.298,   # סירופ 4 ל' פטל - STABLE
-        3464: 0.445,  # עוגיות שוקו-צ'יפס 400 ג' - STABLE
-        42: 0.387,    # חלוה 100 ג' - STABLE
-        6: 0.423,     # טחינה משומשום מלא 500 ג' - STABLE
-        361: 0.356,   # מאפין וניל 45 ג' - STABLE
-        623: 0.412,   # סירופ 4 ל' ענבים - STABLE
-        46: 0.389,    # חלוה 7 שכבות 3 ק"ג - STABLE
-        303: 0.467,   # עוגת תפוז 450 ג' - STABLE
-        18: 0.334,    # טחינה גולמית 1 ק"ג פלסטיק - STABLE
-        812: 0.478,   # חטיף בננית 32 יח' - STABLE
-        
-        # VOLATILE GROUP (CV > 0.5) - 14 SKUs  
-        842: 0.734,   # חטיף תפוח-קינמון 20 ג' - VOLATILE
-        841: 0.892,   # חטיף חמוציות 20 ג' - VOLATILE
-        629: 1.123,   # סירופ 4 ל' לימון - VOLATILE
-        3454: 0.656,  # עוגיות גרנולה 400 ג' - VOLATILE
-        45: 0.789,    # חלוה ללא סוכר 400 ג' - VOLATILE
-        367: 0.945,   # מאפין ממולא שוקולד 50 ג' - VOLATILE
-        3484: 0.567,  # רוגעלך 400 ג' - VOLATILE
-        9: 0.623,     # טחינה מסורתית 500 ג' - VOLATILE
-        304: 0.834,   # עוגת שוקו-צ'יפס 450 ג' - VOLATILE
-        307: 1.012,   # עוגת שיש 450 ג' - VOLATILE
-        312: 0.712,   # עוגה שוקולד ללא סוכר 400 ג' - VOLATILE
-        55: 0.598,    # חלוה 50 ג' בקופסה - VOLATILE
-        3414: 0.876,  # דקליות שוקו 400 ג' - VOLATILE
-        3318: 0.654,  # קצפיות מגש 180 ג' - VOLATILE
-    }
+    return rmse, mae, mape, wape
 
-    st.write("Calculating coefficient of variation (CV) for each SKU...")
+def evaluate_model(predictions, model_name):
+    all_true = []
+    all_pred = []
 
-    # Create product stats dataframe
-    product_stats = []
-    for sku, cv in sku_cv_mapping.items():
-        # Calculate basic stats for display
-        sku_data = df[df['SKU'] == sku]['UnitsSold']
-        if len(sku_data) >= 10:
-            product_stats.append({
-                'SKU': sku,
-                'cv': cv,
-                'mean': sku_data.mean(),
-                'std': sku_data.std(),
-                'count': len(sku_data),
-                'demand_group': 'stable' if cv <= 0.5 else 'volatile'
-            })
+    for item_id, pred_values in predictions.items():
+        item_test = stable_test[stable_test['מקט'] == item_id].sort_values('תאריך')
+        if len(item_test) == len(pred_values):
+            all_true.extend(item_test['sales_corrected'].values)
+            all_pred.extend(pred_values)
 
-    product_stats_df = pd.DataFrame(product_stats)
+    if len(all_true) > 0:
+        rmse, mae, mape, wape = calculate_metrics(np.array(all_true), np.array(all_pred))
+        return {
+            'Model': model_name,
+            'RMSE': round(rmse, 2),
+            'MAE': round(mae, 2),
+            'MAPE': round(mape, 2),
+            'WAPE': round(wape, 2),
+            'Predictions': len(all_true)
+        }
+    return None
 
-    if len(product_stats_df) == 0:
-        return df
+# Evaluate all models
+results = []
+models_to_evaluate = [
+    (predictions_ma, 'Moving Average'),
+    (predictions_exp, 'Exponential Smoothing'),
+    (predictions_hw, 'Holt-Winters')
+]
 
-    st.write(f"Products with sufficient data: {len(product_stats_df)} out of {df['SKU'].nunique()}")
+print("Evaluating statistical models for stable demand...")
 
-    cv_threshold = 0.5
-    st.write(f"CV threshold selected: {cv_threshold:.3f} (fixed)")
+for predictions, model_name in models_to_evaluate:
+    result = evaluate_model(predictions, model_name)
+    if result:
+        results.append(result)
 
-    # Display classification results
-    stable_count = (product_stats_df['demand_group'] == 'stable').sum()
-    volatile_count = (product_stats_df['demand_group'] == 'volatile').sum()
+# Create results table
+if len(results) > 0:
+    results_df = pd.DataFrame(results)
+    print("\nStatistical Models Performance (Stable Demand):")
+    print(results_df.to_string(index=False))
 
-    st.write("Product classification:")
-    st.write(f"stable demand: {stable_count} products ({stable_count/len(product_stats_df)*100:.1f}%)")
-    st.write(f"volatile demand: {volatile_count} products ({volatile_count/len(product_stats_df)*100:.1f}%)")
+    # Find best model
+    best_model = results_df.loc[results_df['RMSE'].idxmin()]
+    print(f"\nBest performing model for stable demand:")
+    print(f"   {best_model['Model']} - RMSE: {best_model['RMSE']}")
 
-    # Statistics by group
-    st.write("\nStatistics by demand group:")
-    for group in ['stable', 'volatile']:
-        group_data = product_stats_df[product_stats_df['demand_group'] == group]
-        if len(group_data) > 0:
-            st.write(f"\n{group} demand:")
-            st.write(f"  Average CV: {group_data['cv'].mean():.3f}")
-            st.write(f"  Average sales: {group_data['mean'].mean():.2f}")
-            st.write(f"  CV range: {group_data['cv'].min():.3f} - {group_data['cv'].max():.3f}")
+    # Model ranking
+    print("\nModel ranking (by RMSE):")
+    sorted_results = results_df.sort_values('RMSE')
+    for i, (_, row) in enumerate(sorted_results.iterrows(), 1):
+        print(f"   {i}. {row['Model']} - RMSE: {row['RMSE']}")
+else:
+    print("No evaluation results available")
 
-    # Add classification to main dataset
-    df = df.merge(product_stats_df[['SKU', 'demand_group', 'cv']], on='SKU', how='left')
+# ================================================================
+# PHASE 11: MACHINE LEARNING MODELS FOR VOLATILE DEMAND
+# ================================================================
 
-    # Final classification distribution
-    final_split = df['demand_group'].value_counts()
-    st.write("\nFinal data distribution:")
-    for group, count in final_split.items():
-        st.write(f"{group} demand: {count} records")
+print("\n" + "="*60)
+print("MACHINE LEARNING MODELS FOR VOLATILE DEMAND")
+print("="*60)
 
-    return df
+# Filter volatile demand products
+volatile_train = train_improved[train_improved['demand_group_new'] == 'volatile'].copy()
+volatile_test = test_improved[test_improved['demand_group_new'] == 'volatile'].copy()
 
-def build_random_forest_model(df_forecast):
-    """Build Random Forest model for high variability products"""
-    if len(df_forecast) < 15:
-        raise ValueError("Need at least 15 records for reliable forecasting")
+print(f"Volatile demand products: {volatile_train['מקט'].nunique()}")
+print(f"Training records: {len(volatile_train)}")
+print(f"Testing records: {len(volatile_test)}")
 
-    features = [
-        'Month', 'DayOfWeek', 'WeekOfYear', 'Quarter', 'DayOfMonth',
-        'IsWeekend', 'IsMonthStart', 'IsMonthEnd',
-        'Product_encoded', 'Category_encoded',
-        'Stock', 'Sales_MA_3', 'Sales_MA_7', 'Sales_MA_14', 'Sales_MA_30',
-        'Sales_Trend_7', 'Stock_Sales_Ratio', 'Product_vs_Category_Performance'
+# Feature selection for ML models
+feature_cols = [
+    'יום בשבוע', 'חודש', 'שבוע בשנה',
+    'sales_lag1', 'sales_lag7', 'sales_ma7_lag',
+    'inventory_sales_ratio_lag', 'sales_change',
+    'מהירות חידוש מלאי (ימים)'
+]
+
+# Prepare training data
+volatile_train_clean = volatile_train.dropna(subset=feature_cols + ['sales_corrected'])
+volatile_test_clean = volatile_test.dropna(subset=feature_cols)
+
+if len(volatile_train_clean) == 0:
+    print("Insufficient data for ML model training")
+else:
+    X_train = volatile_train_clean[feature_cols]
+    y_train = volatile_train_clean['sales_corrected']
+
+    # Additional data cleaning for ML models
+    # Remove infinite values
+    X_train = X_train.replace([np.inf, -np.inf], np.nan)
+    y_train = y_train.replace([np.inf, -np.inf], np.nan)
+
+    # Remove any remaining NaN values
+    mask = ~(X_train.isnull().any(axis=1) | y_train.isnull())
+    X_train = X_train[mask]
+    y_train = y_train[mask]
+
+    print(f"Training ML models on {len(X_train)} samples after cleaning")
+
+    if len(X_train) < 10:
+        print("Insufficient clean data for ML model training")
+    else:
+        # Random Forest with hyperparameter tuning
+        print("Training Random Forest...")
+        rf_params = {
+            'n_estimators': [50, 100],
+            'max_depth': [10, 20, None],
+            'min_samples_split': [2, 5]
+        }
+
+        rf = RandomForestRegressor(random_state=42, n_jobs=-1)
+        rf_grid = GridSearchCV(rf, rf_params, cv=3, scoring='neg_mean_squared_error', n_jobs=-1)
+        rf_grid.fit(X_train, y_train)
+
+        best_rf = rf_grid.best_estimator_
+        print(f"Best RF parameters: {rf_grid.best_params_}")
+
+        # XGBoost with hyperparameter tuning
+        print("Training XGBoost...")
+        xgb_params = {
+            'n_estimators': [50, 100],
+            'max_depth': [3, 6],
+            'learning_rate': [0.1, 0.2]
+        }
+
+        xgb_model = xgb.XGBRegressor(random_state=42, n_jobs=-1)
+        xgb_grid = GridSearchCV(xgb_model, xgb_params, cv=3, scoring='neg_mean_squared_error', n_jobs=-1)
+        xgb_grid.fit(X_train, y_train)
+
+        best_xgb = xgb_grid.best_estimator_
+        print(f"Best XGB parameters: {xgb_grid.best_params_}")
+
+        # Generate predictions
+        predictions_rf = {}
+        predictions_xgb = {}
+
+        for item_id in volatile_test_clean['מקט'].unique():
+            item_test_data = volatile_test_clean[volatile_test_clean['מקט'] == item_id]
+            if len(item_test_data) > 0:
+                X_test_item = item_test_data[feature_cols]
+
+                # Clean test data
+                X_test_item = X_test_item.replace([np.inf, -np.inf], np.nan)
+                X_test_item = X_test_item.dropna()
+
+                if len(X_test_item) > 0:
+                    pred_rf = best_rf.predict(X_test_item)
+                    pred_xgb = best_xgb.predict(X_test_item)
+
+                    predictions_rf[item_id] = pred_rf
+                    predictions_xgb[item_id] = pred_xgb
+
+        print(f"Generated predictions for {len(predictions_rf)} volatile SKUs")
+
+    # Evaluate ML models
+    def evaluate_ml_model(predictions, model_name):
+        all_true = []
+        all_pred = []
+
+        for item_id, pred_values in predictions.items():
+            item_test = volatile_test_clean[volatile_test_clean['מקט'] == item_id].sort_values('תאריך')
+            if len(item_test) == len(pred_values):
+                all_true.extend(item_test['sales_corrected'].values)
+                all_pred.extend(pred_values)
+
+        if len(all_true) > 0:
+            rmse, mae, mape, wape = calculate_metrics(np.array(all_true), np.array(all_pred))
+            return {
+                'Model': model_name,
+                'RMSE': round(rmse, 2),
+                'MAE': round(mae, 2),
+                'MAPE': round(mape, 2),
+                'WAPE': round(wape, 2),
+                'Predictions': len(all_true)
+            }
+        return None
+
+    # Evaluate ML models
+    ml_results = []
+    ml_models_to_evaluate = [
+        (predictions_rf, 'Random Forest'),
+        (predictions_xgb, 'XGBoost')
     ]
 
-    available_features = [f for f in features if f in df_forecast.columns]
+    print("Evaluating ML models for volatile demand...")
 
-    X = df_forecast[available_features].fillna(0)
-    y = df_forecast['UnitsSold']
+    for predictions, model_name in ml_models_to_evaluate:
+        result = evaluate_ml_model(predictions, model_name)
+        if result:
+            ml_results.append(result)
 
-    test_size = min(0.25, max(0.15, len(df_forecast) // 8))
+    # Display ML results
+    if len(ml_results) > 0:
+        ml_results_df = pd.DataFrame(ml_results)
+        print("\nMachine Learning Models Performance (Volatile Demand):")
+        print(ml_results_df.to_string(index=False))
 
-    if len(df_forecast) > 10:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=42, shuffle=True
-        )
+        best_ml_model = ml_results_df.loc[ml_results_df['RMSE'].idxmin()]
+        print(f"\nBest performing ML model for volatile demand:")
+        print(f"   {best_ml_model['Model']} - RMSE: {best_ml_model['RMSE']}")
     else:
-        X_train, X_test, y_train, y_test = X, X, y, y
-
-    n_estimators = min(200, max(50, len(X_train) // 3))
-    max_depth = min(15, max(5, len(X_train) // 10))
-
-    model = RandomForestRegressor(
-        n_estimators=n_estimators,
-        max_depth=max_depth,
-        min_samples_split=max(2, len(X_train) // 50),
-        min_samples_leaf=max(1, len(X_train) // 100),
-        random_state=42,
-        n_jobs=-1
-    )
-
-    model.fit(X_train, y_train)
-
-    y_pred = model.predict(X_test)
-    mae = mean_absolute_error(y_test, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    mape = calculate_mape(y_test, y_pred)
-
-    return model, available_features, mae, rmse, mape
-
-def build_exponential_smoothing_model(df_product):
-    """Build Exponential Smoothing model for low variability products"""
-    if len(df_product) < 10:
-        raise ValueError("Need at least 10 records for Exponential Smoothing")
-
-    df_product = df_product.sort_values('Date')
-    sales_series = df_product.set_index('Date')['UnitsSold']
-
-    # Resample to daily frequency and fill missing dates
-    sales_series = sales_series.resample('D').sum().fillna(0)
-
-    try:
-        model = ExponentialSmoothing(
-            sales_series,
-            trend='add',
-            seasonal='add',
-            seasonal_periods=7
-        ).fit()
-
-        # Calculate metrics on training data
-        fitted_values = model.fittedvalues
-        mae = mean_absolute_error(sales_series, fitted_values)
-        rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-        mape = calculate_mape(sales_series, fitted_values)
-
-        return model, mae, rmse, mape
-
-    except:
-        # Fall back to simple exponential smoothing
-        model = ExponentialSmoothing(sales_series, trend='add').fit()
-        fitted_values = model.fittedvalues
-        mae = mean_absolute_error(sales_series, fitted_values)
-        rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-        mape = calculate_mape(sales_series, fitted_values)
-
-        return model, mae, rmse, mape
-
-# ========== Navigation ==========
-st.sidebar.markdown("<h2 class='sidebar-title'>Navigation</h2>", unsafe_allow_html=True)
-page = st.sidebar.radio("Go to:", ["HOME", "Analysis", "Seasonality", "Forecasting"])
-
-# ========== Session State ==========
-if "df" not in st.session_state:
-    st.session_state.df = None
-if "df_clean" not in st.session_state:
-    st.session_state.df_clean = None
-
-# ========== HOME PAGE ==========
-if page == "HOME":
-    st.markdown("""
-    <h1 style='margin-bottom: 10px; text-align: center;'> Ahva Inventory Dashboard</h1>
-    <p style='text-align: center; font-size: 18px; color: #666;'>Advanced Analytics & Sales Forecasting Platform</p>
-    <hr>
-    """, unsafe_allow_html=True)
-
-    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls", "csv"], help="Upload your Ahva sales data file")
-
-    if uploaded_file is not None:
-        try:
-            with st.spinner("Loading and analyzing your data..."):
-                if uploaded_file.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    df = pd.read_excel(uploaded_file)
-                st.session_state.df = df
-                df_clean = clean_data(df)
-                # Classify products by CV
-                df_clean = classify_products_by_cv(df_clean)
-                st.session_state.df_clean = df_clean
-
-            st.success("File uploaded and processed successfully!")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**Raw Data Overview:**")
-                st.write(f"- Original rows: {len(df):,}")
-                st.write(f"- Columns: {len(df.columns)}")
-                st.write(f"- File size: {uploaded_file.size / 1024:.1f} KB")
-
-            with col2:
-                st.write("**Cleaned Data Overview:**")
-                st.write(f"- Processed rows: {len(df_clean):,}")
-                st.write(f"- Data quality: {(len(df_clean)/len(df)*100):.1f}%")
-                st.write(f"- Ready for analysis: ✅")
-
-            with st.expander("Preview Your Data", expanded=False):
-                st.dataframe(df_clean.head(10))
-
-        except Exception as e:
-            st.error(f"Error loading file: {str(e)}")
-
-    if st.session_state.df_clean is not None:
-        df = st.session_state.df_clean
-
-        st.markdown("---")
-        st.subheader("Date Range Filter")
-
-        if 'Date' in df.columns and not df['Date'].isna().all():
-            min_date = df['Date'].min().date()
-            max_date = df['Date'].max().date()
-
-            col1, col2 = st.columns(2)
-            with col1:
-                start_date = st.date_input("Start Date", value=min_date, min_value=min_date, max_value=max_date)
-            with col2:
-                end_date = st.date_input("End Date", value=max_date, min_value=min_date, max_value=max_date)
-
-            filtered_df = df[(df['Date'] >= pd.to_datetime(start_date)) & (df['Date'] <= pd.to_datetime(end_date))]
-            if len(filtered_df) == 0:
-                filtered_df = df
-        else:
-            filtered_df = df
-
-        # KPI CALCULATIONS
-        st.markdown("---")
-        st.subheader("Key Performance Indicators")
-
-        total_products = filtered_df['Product'].nunique() if 'Product' in filtered_df.columns else 0
-        total_stock = int(filtered_df['Stock'].sum()) if 'Stock' in filtered_df.columns else 0
-        total_demand = int(filtered_df['UnitsSold'].sum()) if 'UnitsSold' in filtered_df.columns else 0
-
-        if 'UnitsSold' in filtered_df.columns and 'Stock' in filtered_df.columns:
-            shortages = (filtered_df['UnitsSold'] > filtered_df['Stock']).sum()
-            filtered_df["ShortageQty"] = (filtered_df["UnitsSold"] - filtered_df["Stock"]).clip(lower=0)
-            missing_units = int(filtered_df["ShortageQty"].sum())
-        else:
-            shortages = 0
-            missing_units = 0
-
-        efficiency = (total_demand / total_stock) * 100 if total_stock > 0 else 0
-        shortage_rate = (missing_units / total_demand) * 100 if total_demand > 0 else 0
-
-        st.markdown(f"""
-        <div class="kpi-container">
-            <div class="kpi-card kpi-purple">
-                <div class="kpi-title">Total Demand</div>
-                <div class="kpi-value">{total_demand:,}</div>
-                <div class="kpi-subtext">Units Sold</div>
-            </div>
-            <div class="kpi-card kpi-orange">
-                <div class="kpi-title">Efficiency</div>
-                <div class="kpi-value">{efficiency:.1f}%</div>
-                <div class="kpi-subtext">Demand/Stock Ratio</div>
-            </div>
-            <div class="kpi-card kpi-red">
-                <div class="kpi-title">Shortage Rate</div>
-                <div class="kpi-value">{shortage_rate:.1f}%</div>
-                <div class="kpi-subtext">Missing Units / Total Demand</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-# ========== ANALYSIS PAGE ==========
-elif page == "Analysis":
-    st.markdown("<h1>Sales & Demand Analysis</h1><hr>", unsafe_allow_html=True)
-
-    if st.session_state.df_clean is not None:
-        df = st.session_state.df_clean.copy()
-
-        if 'Category' not in df.columns or 'UnitsSold' not in df.columns:
-            st.error("Missing required columns: Category, UnitsSold")
-        else:
-            # Sales by Category with Interactive Plotly Charts
-            st.subheader("Sales Distribution by Category")
-            category_sales = df.groupby("Category")["UnitsSold"].agg(['sum', 'mean', 'count']).reset_index()
-            category_sales.columns = ['Category', 'Total_Sales', 'Avg_Sales', 'Records']
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                fig_bar = px.bar(
-                    category_sales,
-                    x="Category",
-                    y="Total_Sales",
-                    color="Total_Sales",
-                    title="Total Units Sold per Category",
-                    labels={"Total_Sales": "Total Units Sold"},
-                    color_continuous_scale="Blues",
-                    text="Total_Sales"
-                )
-                fig_bar.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
-                fig_bar.update_layout(showlegend=False, height=400)
-                st.plotly_chart(fig_bar, use_container_width=True)
-
-            with col2:
-                fig_pie = px.pie(
-                    category_sales,
-                    values="Total_Sales",
-                    names="Category",
-                    title="Sales Distribution (%)",
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                fig_pie.update_layout(height=400)
-                st.plotly_chart(fig_pie, use_container_width=True)
-
-            st.write("**Category Performance Summary:**")
-            category_sales['Avg_Sales'] = category_sales['Avg_Sales'].round(1)
-            st.dataframe(category_sales, use_container_width=True)
-
-            # Time-based analysis
-            if 'Date' in df.columns and not df['Date'].isna().all():
-                st.markdown("---")
-                st.subheader("Sales Trends Over Time")
-
-                daily_sales = df.groupby('Date')['UnitsSold'].sum().reset_index()
-                fig_trend = px.line(
-                    daily_sales,
-                    x='Date',
-                    y='UnitsSold',
-                    title='Daily Sales Trend',
-                    labels={'UnitsSold': 'Units Sold'}
-                )
-                fig_trend.update_traces(line_color='#1f77b4', line_width=3)
-                fig_trend.update_layout(height=400)
-                st.plotly_chart(fig_trend, use_container_width=True)
-
-                st.markdown("---")
-                st.subheader("Sales Pattern Analysis")
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    df['DayName'] = df['Date'].dt.day_name()
-                    daily_pattern = df.groupby('DayName')['UnitsSold'].sum().reset_index()
-
-                    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                    daily_pattern['DayName'] = pd.Categorical(daily_pattern['DayName'], categories=day_order, ordered=True)
-                    daily_pattern = daily_pattern.sort_values('DayName')
-
-                    fig_daily = px.bar(
-                        daily_pattern,
-                        x='DayName',
-                        y='UnitsSold',
-                        title="Sales by Day of Week",
-                        color='UnitsSold',
-                        color_continuous_scale='Blues'
-                    )
-                    fig_daily.update_layout(showlegend=False, height=400)
-                    st.plotly_chart(fig_daily, use_container_width=True)
-
-                with col2:
-                    product_velocity = df.groupby('Product')['UnitsSold'].agg(['sum', 'mean']).reset_index()
-                    product_velocity.columns = ['Product', 'Total_Sales', 'Avg_Daily_Sales']
-                    top_products = product_velocity.nlargest(10, 'Total_Sales')
-
-                    fig_products = px.bar(
-                        top_products,
-                        x='Total_Sales',
-                        y='Product',
-                        orientation='h',
-                        title='Top 10 Products by Sales',
-                        color='Total_Sales',
-                        color_continuous_scale='Viridis'
-                    )
-                    fig_products.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
-                    st.plotly_chart(fig_products, use_container_width=True)
-
-    else:
-        st.warning("Please upload a file in the HOME page first.")
-
-# ========== SEASONALITY PAGE ==========
-elif page == "Seasonality":
-    st.markdown("<h1>Seasonality Analysis</h1><hr>", unsafe_allow_html=True)
-
-    if st.session_state.df_clean is not None:
-        df = st.session_state.df_clean.copy()
-
-        if 'Product' not in df.columns or 'UnitsSold' not in df.columns or 'Date' not in df.columns:
-            st.error("Missing required columns: Product, UnitsSold, Date")
-        elif df['Date'].isna().all():
-            st.error("Date column contains no valid dates")
-        else:
-            products = df['Product'].unique()
-            selected_product = st.selectbox("Select Product for Analysis:", products)
-
-            product_data = df[df['Product'] == selected_product].copy()
-
-            if len(product_data) == 0:
-                st.warning("No data found for selected product.")
-            else:
-                st.subheader(f"Seasonality Analysis for {selected_product}")
-
-                product_data['Month'] = product_data['Date'].dt.month
-                product_data['MonthName'] = product_data['Date'].dt.month_name()
-                monthly_sales = product_data.groupby(['Month', 'MonthName'])['UnitsSold'].sum().reset_index()
-                monthly_sales.columns = ['Month', 'MonthName', 'Total_Sales']
-
-                fig_monthly = px.line(
-                    monthly_sales,
-                    x='MonthName',
-                    y='Total_Sales',
-                    markers=True,
-                    title=f"Monthly Sales Pattern for {selected_product}",
-                    labels={'Total_Sales': 'Total Units Sold', 'MonthName': 'Month'}
-                )
-                fig_monthly.update_traces(line_color='#1e88e5', marker_size=10, line_width=4)
-                fig_monthly.update_layout(height=400)
-                st.plotly_chart(fig_monthly, use_container_width=True)
-
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Sales", f"{product_data['UnitsSold'].sum():,.0f}")
-                with col2:
-                    if len(monthly_sales) > 0:
-                        peak_month = monthly_sales.loc[monthly_sales['Total_Sales'].idxmax(), 'MonthName']
-                        st.metric("Peak Month", peak_month)
-                with col3:
-                    avg_monthly = monthly_sales['Total_Sales'].mean()
-                    st.metric("Avg Monthly", f"{avg_monthly:.1f}")
-                with col4:
-                    if len(monthly_sales) > 0:
-                        peak_ratio = monthly_sales['Total_Sales'].max() / monthly_sales['Total_Sales'].mean()
-                        st.metric("Seasonality Index", f"{peak_ratio:.1f}x")
-
-                st.markdown("---")
-                st.subheader("Weekly Sales Pattern")
-
-                product_data['DayOfWeek'] = product_data['Date'].dt.day_name()
-                weekly_sales = product_data.groupby('DayOfWeek')['UnitsSold'].sum().reset_index()
-
-                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                weekly_sales['DayOfWeek'] = pd.Categorical(weekly_sales['DayOfWeek'], categories=day_order, ordered=True)
-                weekly_sales = weekly_sales.sort_values('DayOfWeek')
-
-                fig_weekly = px.bar(
-                    weekly_sales,
-                    x='DayOfWeek',
-                    y='UnitsSold',
-                    title=f"Weekly Sales Pattern for {selected_product}",
-                    color='UnitsSold',
-                    color_continuous_scale='Blues'
-                )
-                fig_weekly.update_layout(showlegend=False, height=400)
-                st.plotly_chart(fig_weekly, use_container_width=True)
-
-    else:
-        st.warning("Please upload a file in the HOME page first.")
-
-# ========== FORECASTING PAGE ==========
-elif page == "Forecasting":
-    st.markdown("<h1>Enhanced ML Sales Forecasting</h1><hr>", unsafe_allow_html=True)
-
-    if st.session_state.df_clean is not None:
-        df = st.session_state.df_clean.copy()
-
-        st.subheader("Advanced Machine Learning Prediction Engine")
-
-        if len(df) < 15:
-            st.error("Insufficient data for reliable ML forecasting. Need at least 15 records.")
-            st.info("Try uploading more historical data for better predictions.")
-        else:
-            # Model selection
-            st.write("**Select Forecasting Method:**")
-            col1, col2 = st.columns(2)
-
-            with col1:
-                model_type = st.selectbox("Choose Model:",
-                    ["Advanced ML (Recommended)", "Statistical Backup"],
-                    help="Advanced ML uses Random Forest with 20+ features. Statistical backup uses trend analysis."
-                )
-
-            with col2:
-                confidence_level = st.selectbox("Confidence Level:",
-                    ["High (±10%)", "Medium (±15%)", "Low (±20%)"],
-                    index=1,
-                    help="Higher confidence = narrower prediction bands"
-                )
-
-            # Extract confidence percentage
-            confidence_pct = {"High (±10%)": 0.10, "Medium (±15%)": 0.15, "Low (±20%)": 0.20}[confidence_level]
-
-            if model_type == "Advanced ML (Recommended)":
-                with st.spinner("Building enhanced Random Forest model with 20+ features..."):
-                    try:
-                        # Prepare enhanced data
-                        df_forecast = prepare_forecast_data_enhanced(df)
-
-                        # Build enhanced model
-                        model, features, mae, rmse, mape = build_random_forest_model(df_forecast)
-
-                        # Display enhanced model performance
-                        st.success("Enhanced Random Forest model trained successfully!")
-
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
-                        with col2:
-                            st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
-                        with col3:
-                            st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
-
-                        # Model quality assessment
-                        if mape < 10:
-                            st.success("Excellent model quality! High confidence in predictions.")
-                        elif mape < 20:
-                            st.info("Good model quality. Reliable predictions expected.")
-                        elif mape < 30:
-                            st.warning("Moderate model quality. Use predictions with caution.")
-                        else:
-                            st.error("Poor model quality. Consider using Statistical Backup method.")
-
-                        use_ml_model = True
-
-                    except Exception as e:
-                        st.error(f"ML model failed: {str(e)}")
-                        st.stop()
-            else:
-                st.error("Statistical backup method has been disabled. Please use Advanced ML method.")
-                st.stop()
-
-            # Product selection for forecasting
-            st.markdown("---")
-            st.subheader("Generate 14-Day Forecast")
-
-            selected_product = st.selectbox("Select Product:", df['Product'].unique())
-
-            if st.button("Generate 14-Day Forecast", type="primary"):
-                try:
-                    # Fixed 14-day forecast period
-                    forecast_days = 14
-
-                    # Product data validation
-                    product_data = df[df['Product'] == selected_product]
-                    if len(product_data) < 5:
-                        st.error(f"Insufficient data for {selected_product}. Need at least 5 records.")
-                        st.stop()
-
-                    product_info = product_data.iloc[-1]
-
-                    # Get CV from the predefined mapping
-                    product_sku = product_data['SKU'].iloc[0]
-
-                    # Get CV from the classification data
-                    if 'cv' in product_data.columns and not product_data['cv'].isna().all():
-                        cv = product_data['cv'].iloc[0]
-                    else:
-                        # Fallback calculation if CV not found
-                        product_sales = product_data['UnitsSold']
-                        cv = calculate_cv(product_sales)
-
-                    # Use fixed CV threshold of 0.5 for classification
-                    if cv <= 0.5:
-                        # Use Exponential Smoothing for stable demand
-                        st.markdown("### Exponential Smoothing Forecast Results")
-                        st.info(f"Using Exponential Smoothing (CV = {cv:.3f} ≤ 0.5 - Stable Demand)")
-
-                        try:
-                            es_model, mae, rmse, mape = build_exponential_smoothing_model(product_data)
-
-                            # Generate forecast
-                            forecast = es_model.forecast(steps=forecast_days)
-                            forecast = np.maximum(forecast, 0)
-
-                            # Create future dates
-                            last_date = product_data['Date'].max()
-                            future_dates = []
-                            for i in range(1, forecast_days + 1):
-                                future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
-
-                            future_df = pd.DataFrame({
-                                'Date': future_dates,
-                                'Predicted_Sales': forecast
-                            })
-
-                            # Display model performance
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
-                            with col2:
-                                st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
-                            with col3:
-                                st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
-
-                        except Exception as e:
-                            st.error(f"Exponential Smoothing failed: {str(e)}")
-                            st.stop()
-                    else:
-                        # Use Random Forest for volatile demand
-                        st.markdown("### Advanced ML Forecast Results")
-                        st.info(f"Using Random Forest (CV = {cv:.3f} > 0.5 - Volatile Demand)")
-
-                        # Create future dates
-                        last_date = df['Date'].max()
-                        future_dates = []
-                        for i in range(1, forecast_days + 1):
-                            future_dates.append(pd.Timestamp(last_date) + pd.Timedelta(days=i))
-
-                        # Prepare future data for ML model
-                        future_data = []
-                        for date in future_dates:
-                            row = {
-                                'Date': date,
-                                'Product': selected_product,
-                                'Month': date.month,
-                                'DayOfWeek': date.dayofweek,
-                                'WeekOfYear': date.isocalendar().week,
-                                'Quarter': date.quarter,
-                                'DayOfMonth': date.day,
-                                'IsWeekend': 1 if date.dayofweek >= 5 else 0,
-                                'IsMonthStart': 1 if date.day == 1 else 0,
-                                'IsMonthEnd': 1 if date.is_month_end else 0,
-                                'Product_encoded': pd.Categorical([selected_product], categories=df['Product'].unique()).codes[0],
-                                'Category_encoded': pd.Categorical([product_info['Category']], categories=df['Category'].unique()).codes[0],
-                                'Stock': product_info['Stock'],
-                                'Sales_MA_3': product_data['UnitsSold'].tail(3).mean(),
-                                'Sales_MA_7': product_data['UnitsSold'].tail(7).mean(),
-                                'Sales_MA_14': product_data['UnitsSold'].tail(14).mean(),
-                                'Sales_MA_30': product_data['UnitsSold'].tail(30).mean(),
-                                'Sales_Trend_7': 0,
-                                'Stock_Sales_Ratio': product_info['Stock'] / (product_data['UnitsSold'].tail(7).mean() + 1),
-                                'Product_vs_Category_Performance': 1.0
-                            }
-                            future_data.append(row)
-
-                        future_df = pd.DataFrame(future_data)
-
-                        # Generate ML predictions
-                        X_future = future_df[features].fillna(0)
-                        predictions = model.predict(X_future)
-                        predictions = np.maximum(predictions, 0)
-
-                        # Add predictions to dataframe
-                        future_df['Predicted_Sales'] = predictions
-
-                        # Check if predictions are too flat and enhance if needed
-                        variation = predictions.max() - predictions.min()
-                        if variation < 2:
-                            # Use historical day-of-week patterns to enhance
-                            ml_average = predictions.mean()
-                            historical_by_day = product_data.groupby(product_data['Date'].dt.dayofweek)['UnitsSold'].mean()
-                            overall_avg = product_data['UnitsSold'].mean()
-
-                            enhanced_predictions = []
-                            for i, pred in enumerate(predictions):
-                                date = future_df.iloc[i]['Date']
-                                day_of_week = date.dayofweek
-
-                                if day_of_week in historical_by_day.index:
-                                    day_multiplier = historical_by_day[day_of_week] / overall_avg
-                                    enhanced_pred = ml_average * day_multiplier
-                                else:
-                                    enhanced_pred = pred
-
-                                # Add small random variation
-                                import random
-                                enhanced_pred *= (0.95 + random.random() * 0.1)
-                                enhanced_predictions.append(max(0, enhanced_pred))
-
-                            future_df['Predicted_Sales'] = enhanced_predictions
-                            st.info("Enhanced predictions with historical day-of-week patterns")
-
-                        # Calculate product-specific model performance
-                        product_forecast_data = df_forecast[df_forecast['Product'] == selected_product]
-                        if len(product_forecast_data) > 5:
-                            # Split product data for validation
-                            test_size = min(0.3, max(0.2, len(product_forecast_data) // 5))
-                            if len(product_forecast_data) > 10:
-                                train_data = product_forecast_data.iloc[:-int(len(product_forecast_data)*test_size)]
-                                test_data = product_forecast_data.iloc[-int(len(product_forecast_data)*test_size):]
-                                
-                                # Predict on test data
-                                X_test_product = test_data[features].fillna(0)
-                                y_test_product = test_data['UnitsSold']
-                                y_pred_product = model.predict(X_test_product)
-                                
-                                # Calculate product-specific metrics
-                                product_mae = mean_absolute_error(y_test_product, y_pred_product)
-                                product_rmse = np.sqrt(mean_squared_error(y_test_product, y_pred_product))
-                                product_mape = calculate_mape(y_test_product, y_pred_product)
-                            else:
-                                # Use global metrics if insufficient data
-                                product_mae, product_rmse, product_mape = mae, rmse, mape
-                        else:
-                            # Use global metrics if insufficient data
-                            product_mae, product_rmse, product_mape = mae, rmse, mape
-
-                        # Display product-specific model performance
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("MAE", f"{product_mae:.2f}", help="Mean Absolute Error for this product")
-                        with col2:
-                            st.metric("RMSE", f"{product_rmse:.2f}", help="Root Mean Square Error for this product")
-                        with col3:
-                            st.metric("MAPE", f"{product_mape:.1f}%", help="Mean Absolute Percentage Error for this product")
-
-                    # Display results
-                    st.markdown("### 14-Day Forecast Analysis")
-
-                    # Business metrics
-                    total_7_days = future_df['Predicted_Sales'].head(7).sum()
-                    total_14_days = future_df['Predicted_Sales'].head(14).sum()
-                    avg_per_day = future_df['Predicted_Sales'].mean()
-
-                    # GET CURRENT STOCK
-                    current_stock = float(product_info['Stock'])
-
-                    st.markdown("---")
-                    st.markdown("### Stock Planning Analysis")
-
-                    col1, col2, col3, col4 = st.columns(4)
-
-                    with col1:
-                        st.metric(
-                            "Current Stock",
-                            f"{current_stock:.0f} units",
-                            help="Your actual current inventory level"
-                        )
-                    with col2:
-                        st.metric(
-                            "7-Day Forecast",
-                            f"{total_7_days:.0f} units",
-                            help="Predicted sales for next week"
-                        )
-                    with col3:
-                        st.metric(
-                            "14-Day Forecast",
-                            f"{total_14_days:.0f} units",
-                            help="Predicted sales for next 2 weeks"
-                        )
-                    with col4:
-                        remaining_after_14_days = current_stock - total_14_days
-                        st.metric(
-                            "Stock After 14 Days",
-                            f"{remaining_after_14_days:.0f} units",
-                            delta=f"{remaining_after_14_days - current_stock:.0f}",
-                            help="Expected remaining stock after 2 weeks"
-                        )
-
-                    # PRACTICAL BUSINESS RECOMMENDATIONS
-                    st.markdown("### Smart Ordering Recommendations")
-
-                    # Calculate different scenarios
-                    remaining_after_7_days = current_stock - total_7_days
-                    remaining_after_14_days = current_stock - total_14_days
-
-                    # Safety stock recommendation (25% buffer)
-                    safety_stock_needed = total_14_days * 0.25
-
-                    if remaining_after_7_days <= 0:
-                        # Critical - will run out within a week
-                        shortage_7_days = abs(remaining_after_7_days)
-                        recommended_order = shortage_7_days + total_14_days + safety_stock_needed
-                        st.error(f"""
-                        **CRITICAL SHORTAGE ALERT**
-                        - You will run out of stock in **less than 7 days**
-                        - Shortage in 7 days: **{shortage_7_days:.0f} units**
-                        - **URGENT ORDER NEEDED: {recommended_order:.0f} units**
-                        - This covers the shortage + next 14 days + safety buffer
-                        """)
-
-                    elif remaining_after_14_days <= 0:
-                        # Will run out within 2 weeks
-                        shortage_14_days = abs(remaining_after_14_days)
-                        recommended_order = shortage_14_days + safety_stock_needed
-                        st.warning(f"""
-                        **ORDER RECOMMENDED**
-                        - Current stock will last: **{(current_stock / avg_per_day):.1f} days**
-                        - Will run short in 14 days by: **{shortage_14_days:.0f} units**
-                        - **RECOMMENDED ORDER: {recommended_order:.0f} units**
-                        - This covers the shortage + safety buffer
-                        """)
-
-                    elif remaining_after_14_days <= safety_stock_needed:
-                        # Low stock after 2 weeks
-                        recommended_order = total_14_days  # Restock for next 2 weeks
-                        st.info(f"""
-                        **PLAN AHEAD**
-                        - Stock after 14 days: **{remaining_after_14_days:.0f} units** (low)
-                        - **SUGGESTED ORDER: {recommended_order:.0f} units**
-                        - This maintains healthy inventory levels
-                        - Order timing: **Within next week**
-                        """)
-
-                    else:
-                        # Stock is sufficient
-                        days_stock_will_last = current_stock / avg_per_day
-                        st.success(f"""
-                        **STOCK STATUS: GOOD**
-                        - Current stock will last: **{days_stock_will_last:.1f} days**
-                        - After 14 days you'll have: **{remaining_after_14_days:.0f} units**
-                        - **NO IMMEDIATE ORDER NEEDED**
-                        - Next review recommended: **In 1 week**
-                        """)
-
-                    # Additional insights
-                    st.markdown("---")
-                    st.markdown("### Business Summary")
-
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.markdown("**Quick Status Check:**")
-                        days_stock_will_last = current_stock / avg_per_day if avg_per_day > 0 else 0
-
-                        if days_stock_will_last >= 21:
-                            st.success(f"**{days_stock_will_last:.0f} days of stock** - You're well covered")
-                        elif days_stock_will_last >= 14:
-                            st.info(f"**{days_stock_will_last:.0f} days of stock** - Good for now")
-                        elif days_stock_will_last >= 7:
-                            st.warning(f"**{days_stock_will_last:.0f} days of stock** - Plan to reorder soon")
-                        else:
-                            st.error(f"**{days_stock_will_last:.0f} days of stock** - Order immediately!")
-
-                    with col2:
-                        st.markdown("**Sales Value:**")
-                        st.write("Add price information to enable revenue calculations")
-
-                    # FORECAST CHART ONLY
-                    st.markdown("### 14-Day Forecast Chart")
-
-                    fig = go.Figure()
-
-                    # ONLY forecast data
-                    fig.add_trace(go.Scatter(
-                        x=future_df['Date'],
-                        y=future_df['Predicted_Sales'],
-                        mode='lines+markers',
-                        name='14-Day Forecast',
-                        line=dict(color='#1f77b4', width=3),
-                        marker=dict(size=6, color='#1f77b4')
-                    ))
-
-                    # Clean layout
-                    fig.update_layout(
-                        title=f'Sales Forecast: {selected_product}',
-                        xaxis_title='Date',
-                        yaxis_title='Predicted Units',
-                        height=400,
-                        showlegend=False
-                    )
-
-                    st.plotly_chart(fig, use_container_width=True)
-
-                except Exception as e:
-                    st.error(f"Error generating forecast: {str(e)}")
-                    st.write("**Debug Info:**")
-                    st.write(f"- Product: {selected_product}")
-                    st.write(f"- Data points: {len(product_data)}")
-                    st.write(f"- Date range: {product_data['Date'].min()} to {product_data['Date'].max()}")
-
-    else:
-        st.warning("Please upload and clean your data in the HOME page first.")
-
-# ========== Sidebar ==========
-st.sidebar.markdown("---")
-st.sidebar.subheader("Data Tools")
-
-if st.session_state.df_clean is not None:
-    if st.sidebar.button("Export Data"):
-        csv = st.session_state.df_clean.to_csv(index=False)
-        st.sidebar.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name=f"ahva_data_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-
-
-
+        print("No ML evaluation results available")
+
+# ================================================================
+# PHASE 12: FINAL RESULTS AND RECOMMENDATIONS
+# ================================================================
+
+print("\n" + "="*60)
+print("FINAL RESULTS AND RECOMMENDATIONS")
+print("="*60)
+
+# Summary statistics
+print("Dataset Summary:")
+print(f"Total records processed: {len(df_improved):,}")
+print(f"Unique SKUs: {df_improved['מקט'].nunique()}")
+print(f"Date range: {df_improved['תאריך'].min().date()} to {df_improved['תאריך'].max().date()}")
+print(f"Training period: {train_improved['תאריך'].min().date()} to {train_improved['תאריך'].max().date()}")
+print(f"Testing period: {test_improved['תאריך'].min().date()} to {test_improved['תאריך'].max().date()}")
+
+# Demand classification summary
+final_classification = df_improved['demand_group_new'].value_counts()
+print(f"\nFinal demand classification:")
+for group, count in final_classification.items():
+    pct = (count / len(df_improved)) * 100
+    print(f"{group} demand: {count:,} records ({pct:.1f}%)")
+
+# Model performance summary
+print(f"\nModel Performance Summary:")
+
+if len(results) > 0:
+    print(f"\nStable Demand Models:")
+    stable_best = results_df.loc[results_df['RMSE'].idxmin()]
+    print(f"Best model: {stable_best['Model']}")
+    print(f"RMSE: {stable_best['RMSE']}, MAE: {stable_best['MAE']}, MAPE: {stable_best['MAPE']}%")
+
+if 'ml_results_df' in locals() and len(ml_results_df) > 0:
+    print(f"\nVolatile Demand Models:")
+    volatile_best = ml_results_df.loc[ml_results_df['RMSE'].idxmin()]
+    print(f"Best model: {volatile_best['Model']}")
+    print(f"RMSE: {volatile_best['RMSE']}, MAE: {volatile_best['MAE']}, MAPE: {volatile_best['MAPE']}%")
+
+# Recommendations
+print(f"\nKey Recommendations:")
+print(f"1. Use statistical models (Exponential Smoothing, Holt-Winters) for stable demand products")
+print(f"2. Apply machine learning models (Random Forest, XGBoost) for volatile demand products")
+print(f"3. Implement outlier treatment to improve forecast accuracy")
+print(f"4. Consider separate models for different product categories")
+print(f"5. Monitor model performance and retrain periodically")
+
+# Feature importance (if available)
+if 'best_rf' in locals():
+    print(f"\nTop 5 Important Features (Random Forest):")
+    feature_importance = pd.DataFrame({
+        'feature': feature_cols,
+        'importance': best_rf.feature_importances_
+    }).sort_values('importance', ascending=False)
+
+    for i, (_, row) in enumerate(feature_importance.head().iterrows(), 1):
+        print(f"{i}. {row['feature']}: {row['importance']:.3f}")
+
+print(f"\nForecasting system implementation completed successfully.")
+print(f"="*60)
