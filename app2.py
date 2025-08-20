@@ -447,7 +447,9 @@ def build_random_forest_model(df_forecast):
     y_pred = model.predict(X_test)
     mae = mean_absolute_error(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    r2 = return model, available_features, mae, rmse, r2
+    mape = calculate_mape(y_test, y_pred)
+
+    return model, available_features, mae, rmse, mape
 
 def build_exponential_smoothing_model(df_product):
     """Build Exponential Smoothing model for low variability products"""
