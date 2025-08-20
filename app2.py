@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import warnings
 
@@ -444,12 +444,13 @@ def build_random_forest_model(df_forecast):
     
     model.fit(X_train, y_train)
     
-    y_pred = model.predict(X_test)
+        y_pred = model.predict(X_test)
     mae = mean_absolute_error(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
-    
-    return model, available_features, mae, rmse, mape, mape
+    mape = calculate_mape(y_test, y_pred)
+
+    return model, available_features, mae, rmse, mape
+
 
 def build_exponential_smoothing_model(df_product):
     """Build Exponential Smoothing model for low variability products"""
@@ -482,11 +483,12 @@ def build_exponential_smoothing_model(df_product):
         # Fall back to simple exponential smoothing
         model = ExponentialSmoothing(sales_series, trend='add').fit()
         fitted_values = model.fittedvalues
-        mae = mean_absolute_error(sales_series, fitted_values)
-        rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
-        mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
-        
-        return model, mae, rmse, mape, mape
+    mae = mean_absolute_error(sales_series, fitted_values)
+    rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
+    mape = calculate_mape(sales_series, fitted_values)
+
+    return model, mae, rmse, mape
+
 
 # ========== Navigation ==========
 st.sidebar.markdown("<h2 class='sidebar-title'>Navigation</h2>", unsafe_allow_html=True)
@@ -841,7 +843,7 @@ elif page == "Forecasting":
                         st.markdown("### Exponential Smoothing Forecast Results")
                         
                         try:
-                            model, mae, rmse, r2 = build_exponential_smoothing_model(product_data)
+                            model, mae, rmse, mape = build_exponential_smoothing_model(product_data)
                             
                             # Generate forecast
                             forecast = model.forecast(steps=forecast_days)
@@ -865,11 +867,11 @@ elif page == "Forecasting":
                             with col2:
                                 st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
                             with col3:
-                                st.metric("MAPE Score", f"{r2:.3f}", help="Explained Variance")
+                                st.metric("MAPE", f"{mape:.2f}%", help="Mean Absolute Percentage Error")
                             with col4:
                                 avg_sales = product_data['UnitsSold'].mean()
                                 accuracy_pct = max(0, (1 - mae/avg_sales) * 100) if avg_sales > 0 else 0
-                                st.metric("MAPE", f"{accuracy_pct:.1f}%", help="Prediction MAPE")
+                                st.metric("Avg Sales", f"{avg_sales:.1f}", help="Average historical daily sales")
                             
                         except Exception as e:
                             st.error(f"Exponential Smoothing failed: {str(e)}")
@@ -881,7 +883,7 @@ elif page == "Forecasting":
                         
                         try:
                             df_forecast = prepare_forecast_data_enhanced(df)
-                            model, features, mae, rmse, r2 = build_random_forest_model(df_forecast)
+                            model, features, mae, rmse, mape = build_random_forest_model(df_forecast)
                             
                             # Create future dates
                             last_date = df['Date'].max()
@@ -932,11 +934,11 @@ elif page == "Forecasting":
                             with col2:
                                 st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
                             with col3:
-                                st.metric("MAPE Score", f"{r2:.3f}", help="Explained Variance")
+                                st.metric("MAPE", f"{mape:.2f}%", help="Mean Absolute Percentage Error")
                             with col4:
                                 avg_sales = df['UnitsSold'].mean()
                                 accuracy_pct = max(0, (1 - mae/avg_sales) * 100)
-                                st.metric("MAPE", f"{accuracy_pct:.1f}%", help="Prediction MAPE")
+                                st.metric("Avg Sales", f"{avg_sales:.1f}", help="Average historical daily sales")
                             
                         except Exception as e:
                             st.error(f"Random Forest failed: {str(e)}")
