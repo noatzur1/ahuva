@@ -16,14 +16,231 @@ warnings.filterwarnings('ignore')
 
 # ========== Page Configuration ==========
 st.set_page_config(
-    page_title="Ahva Dashboard", 
+    page_title='Ahva Analytics Platform', 
     layout="wide",
     initial_sidebar_state="expanded",
     page_icon="📦"
 )
 
 # ========== CSS Styling ==========
+st.markdown("""
+<style>
 
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    * {
+        font-family: 'Inter', sans-serif;
+    }
+
+    .main > div {
+        padding-top: 1.5rem;
+        background: #fafbfc;
+    }
+
+    .stSelectbox > div > div {
+        background: white;
+        border: 1px solid #e1e5e9;
+        border-radius: 8px;
+    }
+
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 2rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    .kpi-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1.5rem;
+        margin: 2rem 0;
+    }
+
+    .kpi-card {
+        background: white;
+        border: 1px solid #e1e5e9;
+        border-radius: 12px;
+        padding: 1.5rem;
+        text-align: center;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .kpi-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #667eea, #764ba2);
+    }
+
+    .kpi-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+        border-color: #667eea;
+    }
+
+    .kpi-title {
+        font-size: 0.875rem;
+        color: #6c757d;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .kpi-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #2c3e50;
+        margin: 0.5rem 0;
+        line-height: 1;
+    }
+
+    .kpi-subtext {
+        font-size: 0.75rem;
+        color: #95a5a6;
+        font-weight: 500;
+    }
+
+    .sidebar-title {
+        color: #2c3e50;
+        margin-bottom: 1.5rem;
+        font-weight: 700;
+        text-align: center;
+        font-size: 1.25rem;
+    }
+
+    h1, h2, h3 {
+        color: #2c3e50;
+        font-weight: 700;
+        margin-bottom: 1rem;
+    }
+
+    h1 {
+        font-size: 2.5rem;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-align: center;
+        margin-bottom: 0.5rem;
+    }
+
+    .page-subtitle {
+        text-align: center;
+        color: #6c757d;
+        font-size: 1.125rem;
+        margin-bottom: 2rem;
+        font-weight: 500;
+    }
+
+    hr {
+        margin: 2rem 0;
+        border: none;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, #e1e5e9, transparent);
+    }
+
+    .alert-box {
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+        border-left: 4px solid;
+        background: white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+
+    .alert-success {
+        border-left-color: #28a745;
+        background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+        color: #155724;
+    }
+
+    .alert-warning {
+        border-left-color: #ffc107;
+        background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+        color: #856404;
+    }
+
+    .alert-danger {
+        border-left-color: #dc3545;
+        background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+        color: #721c24;
+    }
+
+    .alert-info {
+        border-left-color: #17a2b8;
+        background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
+        color: #0c5460;
+    }
+
+    .section-header {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #2c3e50;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid #e1e5e9;
+    }
+
+    .upload-area {
+        border: 2px dashed #e1e5e9;
+        border-radius: 12px;
+        padding: 3rem;
+        text-align: center;
+        background: white;
+        transition: all 0.3s ease;
+    }
+
+    .upload-area:hover {
+        border-color: #667eea;
+        background: #f8f9ff;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .badge-success {
+        background: #d4edda;
+        color: #155724;
+    }
+
+    @media (max-width: 768px) {
+        .kpi-container {
+            grid-template-columns: 1fr;
+        }
+        .kpi-value {
+            font-size: 1.75rem;
+        }
+        h1 {
+            font-size: 2rem;
+        }
+    }
+
+</style>
+""", unsafe_allow_html=True)
 
 
 # ========== Column Mapping ==========
@@ -269,7 +486,7 @@ def build_exponential_smoothing_model(df_product):
 
 # ========== Navigation ==========
 st.sidebar.markdown("<h2 class='sidebar-title'>Navigation</h2>", unsafe_allow_html=True)
-page = st.sidebar.radio("Go to:", ["HOME", "Analysis", "Seasonality", "Forecasting"])
+page = st.sidebar.radio("Go to:", ["Dashboard", "Sales Analysis", "Seasonality Analysis", "Sales Forecasting"])
 
 # ========== Session State ==========
 if "df" not in st.session_state:
