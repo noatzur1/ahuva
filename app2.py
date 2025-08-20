@@ -443,8 +443,8 @@ def build_random_forest_model(df_forecast):
     )
     
     model.fit(X_train, y_train)
-    
-        y_pred = model.predict(X_test)
+
+    y_pred = model.predict(X_test)
     mae = mean_absolute_error(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
     mape = calculate_mape(y_test, y_pred)
@@ -476,8 +476,7 @@ def build_exponential_smoothing_model(df_product):
         mae = mean_absolute_error(sales_series, fitted_values)
         rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
         mape = calculate_mape(y_test if 'y_test' in locals() else sales_series, y_pred if 'y_pred' in locals() else fitted_values)
-        
-        return model, mae, rmse, mape, mape
+    return model, mae, rmse, mape, mape
         
     except:
         # Fall back to simple exponential smoothing
@@ -486,7 +485,6 @@ def build_exponential_smoothing_model(df_product):
     mae = mean_absolute_error(sales_series, fitted_values)
     rmse = np.sqrt(mean_squared_error(sales_series, fitted_values))
     mape = calculate_mape(sales_series, fitted_values)
-
     return model, mae, rmse, mape
 
 
@@ -870,7 +868,6 @@ elif page == "Forecasting":
                                 st.metric("MAPE", f"{mape:.2f}%", help="Mean Absolute Percentage Error")
                             with col4:
                                 avg_sales = product_data['UnitsSold'].mean()
-                                accuracy_pct = max(0, (1 - mae/avg_sales) * 100) if avg_sales > 0 else 0
                                 st.metric("Avg Sales", f"{avg_sales:.1f}", help="Average historical daily sales")
                             
                         except Exception as e:
@@ -937,8 +934,7 @@ elif page == "Forecasting":
                                 st.metric("MAPE", f"{mape:.2f}%", help="Mean Absolute Percentage Error")
                             with col4:
                                 avg_sales = df['UnitsSold'].mean()
-                                accuracy_pct = max(0, (1 - mae/avg_sales) * 100)
-                                st.metric("Avg Sales", f"{avg_sales:.1f}", help="Average historical daily sales")
+                            st.metric("Avg Sales", f"{avg_sales:.1f}", help="Average historical daily sales")
                             
                         except Exception as e:
                             st.error(f"Random Forest failed: {str(e)}")
