@@ -415,36 +415,36 @@ def classify_products_by_cv(df):
     # Predefined CV values for each SKU based on analysis - CORRECTED WITH ACTUAL SKUs
     sku_cv_mapping = {
         # STABLE GROUP (CV ≤ 0.5) - 14 SKUs
-        16: 0.234,    # טחינה בדלי 18 קג - STABLE
-        13: 0.312,    # טחינה 3 קג - STABLE  
-        10: 0.378,    # טחינה בולמית 500 גר פלסטיק - STABLE
-        22: 0.456,    # חלוה בלוק 500 גר וניל - STABLE
-        621: 0.298,   # סירופ 4 לי פטל - STABLE
-        3464: 0.445,  # עוגיות שוקו-צ׳יפס 400 גר - STABLE
-        42: 0.387,    # חלוה 100 גר - STABLE
-        6: 0.423,     # טחינה משומשום מלא 500 גר - STABLE
-        361: 0.356,   # מאפין וניל 45 גר - STABLE
-        623: 0.412,   # סירופ 4 לי ענבים - STABLE
-        46: 0.389,    # חלוה 7 שכבות 3 קג - STABLE
-        303: 0.467,   # עוגת תפוז 450 גר - STABLE
-        18: 0.334,    # טחינה בולמית 1 קג פלסטיק - STABLE
+        16: 0.234,    # טחינה בדלי 18 ק"ג - STABLE
+        13: 0.312,    # טחינה 3 ק"ג - STABLE  
+        10: 0.378,    # טחינה גולמית 500 ג' פלסטיק - STABLE
+        22: 0.456,    # חלוה בלוק 500 ג' וניל - STABLE
+        621: 0.298,   # סירופ 4 ל' פטל - STABLE
+        3464: 0.445,  # עוגיות שוקו-צ'יפס 400 ג' - STABLE
+        42: 0.387,    # חלוה 100 ג' - STABLE
+        6: 0.423,     # טחינה משומשום מלא 500 ג' - STABLE
+        361: 0.356,   # מאפין וניל 45 ג' - STABLE
+        623: 0.412,   # סירופ 4 ל' ענבים - STABLE
+        46: 0.389,    # חלוה 7 שכבות 3 ק"ג - STABLE
+        303: 0.467,   # עוגת תפוז 450 ג' - STABLE
+        18: 0.334,    # טחינה גולמית 1 ק"ג פלסטיק - STABLE
         812: 0.478,   # חטיף בננית 32 יח' - STABLE
         
         # VOLATILE GROUP (CV > 0.5) - 14 SKUs  
-        842: 0.734,   # חטיף תפוח-קינמון 20 גר - VOLATILE
-        841: 0.892,   # חטיף חמוציות 20 גר - VOLATILE
-        629: 1.123,   # סירופ 4 לי לימון - VOLATILE
-        3454: 0.656,  # עוגיות ברנולה 400 גר - VOLATILE
-        45: 0.789,    # חלוה ללא סוכר 400 גר - VOLATILE
-        367: 0.945,   # מאפין ממולא שוקולד 50 גר - VOLATILE
-        3484: 0.567,  # רוגעלך 400 גר - VOLATILE
-        9: 0.623,     # טחינה מסורתית 500 גר - VOLATILE
-        304: 0.834,   # עוגת שוקו-צ׳יפס 450 גר - VOLATILE
-        307: 1.012,   # עוגת שיש 450 גר - VOLATILE
-        312: 0.712,   # עוגה שוקולד ללא סוכר 400 גר - VOLATILE
-        55: 0.598,    # חלוה 50 גר בקופסה - VOLATILE
-        3414: 0.876,  # דקליות שוקו 400 גר - VOLATILE
-        3318: 0.654,  # קצפיות מגש 180 גר - VOLATILE (Modified for higher error rates)
+        842: 0.734,   # חטיף תפוח-קינמון 20 ג' - VOLATILE
+        841: 0.892,   # חטיף חמוציות 20 ג' - VOLATILE
+        629: 1.123,   # סירופ 4 ל' לימון - VOLATILE
+        3454: 0.656,  # עוגיות גרנולה 400 ג' - VOLATILE
+        45: 0.789,    # חלוה ללא סוכר 400 ג' - VOLATILE
+        367: 0.945,   # מאפין ממולא שוקולד 50 ג' - VOLATILE
+        3484: 0.567,  # רוגעלך 400 ג' - VOLATILE
+        9: 0.623,     # טחינה מסורתית 500 ג' - VOLATILE
+        304: 0.834,   # עוגת שוקו-צ'יפס 450 ג' - VOLATILE
+        307: 1.012,   # עוגת שיש 450 ג' - VOLATILE
+        312: 0.712,   # עוגה שוקולד ללא סוכר 400 ג' - VOLATILE
+        55: 0.598,    # חלוה 50 ג' בקופסה - VOLATILE
+        3414: 0.876,  # דקליות שוקו 400 ג' - VOLATILE
+        3318: 0.654,  # קצפיות מגש 180 ג' - VOLATILE
     }
 
     st.write("Calculating coefficient of variation (CV) for each SKU...")
@@ -503,7 +503,7 @@ def classify_products_by_cv(df):
 
     return df
 
-def build_random_forest_model(df_forecast, selected_product=None):
+def build_random_forest_model(df_forecast):
     """Build Random Forest model for high variability products"""
     if len(df_forecast) < 15:
         raise ValueError("Need at least 15 records for reliable forecasting")
@@ -530,66 +530,24 @@ def build_random_forest_model(df_forecast, selected_product=None):
     else:
         X_train, X_test, y_train, y_test = X, X, y, y
 
-    # Special handling for קצפיות מגש 180 גר to produce much higher error rates (70-90%)
-    if selected_product and "קצפיות מגש 180" in selected_product:
-        # Very poor model parameters to maximize errors
-        n_estimators = min(20, max(5, len(X_train) // 20))  # Very few trees
-        max_depth = min(3, max(2, len(X_train) // 30))  # Very shallow depth
-        
-        model = RandomForestRegressor(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            min_samples_split=max(10, len(X_train) // 10),  # Very high split requirement
-            min_samples_leaf=max(5, len(X_train) // 30),   # Very high leaf requirement
-            max_features=0.3,  # Very limited feature consideration
-            random_state=999,  # Different random state for maximum variation
-            n_jobs=-1
-        )
-    else:
-        # Normal model parameters for other products
-        n_estimators = min(200, max(50, len(X_train) // 3))
-        max_depth = min(15, max(5, len(X_train) // 10))
+    n_estimators = min(200, max(50, len(X_train) // 3))
+    max_depth = min(15, max(5, len(X_train) // 10))
 
-        model = RandomForestRegressor(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            min_samples_split=max(2, len(X_train) // 50),
-            min_samples_leaf=max(1, len(X_train) // 100),
-            random_state=42,
-            n_jobs=-1
-        )
+    model = RandomForestRegressor(
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        min_samples_split=max(2, len(X_train) // 50),
+        min_samples_leaf=max(1, len(X_train) // 100),
+        random_state=42,
+        n_jobs=-1
+    )
 
     model.fit(X_train, y_train)
 
     y_pred = model.predict(X_test)
-    
-    # For קצפיות מגש 180 גר, artificially increase error metrics to 70-80% range
-    if selected_product and "קצפיות מגש 180" in selected_product:
-        # Add very high noise to predictions to achieve 70-80% error rates
-        noise_factor = 1.5  # 150% noise - very high
-        noise = np.random.normal(0, noise_factor * np.std(y_pred), len(y_pred))
-        y_pred_very_noisy = y_pred + noise
-        y_pred_very_noisy = np.maximum(y_pred_very_noisy, 0)  # Ensure non-negative
-        
-        # Calculate with very noisy predictions
-        mae_base = mean_absolute_error(y_test, y_pred_very_noisy)
-        rmse_base = np.sqrt(mean_squared_error(y_test, y_pred_very_noisy))
-        mape_base = calculate_mape(y_test, y_pred_very_noisy)
-        
-        # Force all metrics to be in the 70-80 range
-        target_mape = np.random.uniform(72, 78)  # Random between 72-78%
-        target_mae = np.mean(y_test) * np.random.uniform(0.70, 0.80)  # 70-80% of mean
-        target_rmse = np.mean(y_test) * np.random.uniform(0.75, 0.85)  # 75-85% of mean
-        
-        mape = target_mape
-        mae = target_mae
-        rmse = target_rmse
-        
-    else:
-        # Normal error calculation for other products
-        mae = mean_absolute_error(y_test, y_pred)
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-        mape = calculate_mape(y_test, y_pred)
+    mae = mean_absolute_error(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    mape = calculate_mape(y_test, y_pred)
 
     return model, available_features, mae, rmse, mape
 
@@ -1110,66 +1068,13 @@ elif page == "Forecasting":
 
                         future_df = pd.DataFrame(future_data)
 
-                        # Build product-specific model with higher error rates for קצפיות מגש 180 גר
-                        try:
-                            product_forecast_data = df_forecast[df_forecast['Product'] == selected_product]
-                            product_model, product_features, product_mae, product_rmse, product_mape = build_random_forest_model(
-                                product_forecast_data, selected_product=selected_product
-                            )
+                        # Generate ML predictions
+                        X_future = future_df[features].fillna(0)
+                        predictions = model.predict(X_future)
+                        predictions = np.maximum(predictions, 0)
 
-                            # Generate ML predictions using product-specific model
-                            X_future = future_df[product_features].fillna(0)
-                            predictions = product_model.predict(X_future)
-                            predictions = np.maximum(predictions, 0)
-
-                            # Special adjustment for קצפיות מגש 180 גר - make predictions more erratic
-                            if "קצפיות מגש 180" in selected_product:
-                                # Add significant variability to predictions to match high error rates
-                                base_prediction = predictions.mean()
-                                
-                                # Create more erratic predictions that will justify high error metrics
-                                erratic_predictions = []
-                                for i, pred in enumerate(predictions):
-                                    # Add high variability factor
-                                    variability_factor = np.random.uniform(0.3, 1.8)  # 30% to 180% of original
-                                    erratic_pred = pred * variability_factor
-                                    
-                                    # Add some random spikes and drops
-                                    if np.random.random() < 0.3:  # 30% chance of extreme value
-                                        erratic_pred *= np.random.uniform(0.1, 3.0)
-                                    
-                                    erratic_predictions.append(max(0, erratic_pred))
-                                
-                                predictions = np.array(erratic_predictions)
-
-                            # Add predictions to dataframe
-                            future_df['Predicted_Sales'] = predictions
-
-                            # Display product-specific model performance
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("MAE", f"{product_mae:.2f}", help="Mean Absolute Error for this product")
-                            with col2:
-                                st.metric("RMSE", f"{product_rmse:.2f}", help="Root Mean Square Error for this product")
-                            with col3:
-                                st.metric("MAPE", f"{product_mape:.1f}%", help="Mean Absolute Percentage Error for this product")
-
-                        except Exception as e:
-                            # Fallback to global model if product-specific model fails
-                            st.warning(f"Product-specific model failed, using global model: {str(e)}")
-                            X_future = future_df[features].fillna(0)
-                            predictions = model.predict(X_future)
-                            predictions = np.maximum(predictions, 0)
-                            future_df['Predicted_Sales'] = predictions
-
-                            # Display global model performance
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("MAE", f"{mae:.2f}", help="Mean Absolute Error")
-                            with col2:
-                                st.metric("RMSE", f"{rmse:.2f}", help="Root Mean Square Error")
-                            with col3:
-                                st.metric("MAPE", f"{mape:.1f}%", help="Mean Absolute Percentage Error")
+                        # Add predictions to dataframe
+                        future_df['Predicted_Sales'] = predictions
 
                         # Check if predictions are too flat and enhance if needed
                         variation = predictions.max() - predictions.min()
@@ -1197,6 +1102,40 @@ elif page == "Forecasting":
 
                             future_df['Predicted_Sales'] = enhanced_predictions
                             st.info("Enhanced predictions with historical day-of-week patterns")
+
+                        # Calculate product-specific model performance
+                        product_forecast_data = df_forecast[df_forecast['Product'] == selected_product]
+                        if len(product_forecast_data) > 5:
+                            # Split product data for validation
+                            test_size = min(0.3, max(0.2, len(product_forecast_data) // 5))
+                            if len(product_forecast_data) > 10:
+                                train_data = product_forecast_data.iloc[:-int(len(product_forecast_data)*test_size)]
+                                test_data = product_forecast_data.iloc[-int(len(product_forecast_data)*test_size):]
+                                
+                                # Predict on test data
+                                X_test_product = test_data[features].fillna(0)
+                                y_test_product = test_data['UnitsSold']
+                                y_pred_product = model.predict(X_test_product)
+                                
+                                # Calculate product-specific metrics
+                                product_mae = mean_absolute_error(y_test_product, y_pred_product)
+                                product_rmse = np.sqrt(mean_squared_error(y_test_product, y_pred_product))
+                                product_mape = calculate_mape(y_test_product, y_pred_product)
+                            else:
+                                # Use global metrics if insufficient data
+                                product_mae, product_rmse, product_mape = mae, rmse, mape
+                        else:
+                            # Use global metrics if insufficient data
+                            product_mae, product_rmse, product_mape = mae, rmse, mape
+
+                        # Display product-specific model performance
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("MAE", f"{product_mae:.2f}", help="Mean Absolute Error for this product")
+                        with col2:
+                            st.metric("RMSE", f"{product_rmse:.2f}", help="Root Mean Square Error for this product")
+                        with col3:
+                            st.metric("MAPE", f"{product_mape:.1f}%", help="Mean Absolute Percentage Error for this product")
 
                     # Display results
                     st.markdown("### 14-Day Forecast Analysis")
@@ -1370,11 +1309,5 @@ if st.session_state.df_clean is not None:
             mime="text/csv"
         )
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Ahva Dashboard v2.1**")
-st.sidebar.markdown("*Enhanced ML Platform*")
-st.sidebar.markdown("Built with Streamlit & scikit-learn")
 
-if st.session_state.df_clean is not None:
-    st.sidebar.success("Enhanced Dashboard Ready!")
-    st.sidebar.info("ML Forecasting Active")
+
